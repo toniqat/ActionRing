@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Theme: Dark (Warm Slate) ── */
+:root,
+:root[data-theme='dark'] {
+  --c-bg:           #161b22;
+  --c-surface:      #21262d;
+  --c-elevated:     #2d333b;
+  --c-border:       rgba(255,255,255,0.10);
+  --c-border-sub:   rgba(255,255,255,0.06);
+  --c-text:         #e6edf3;
+  --c-text-muted:   #848d97;
+  --c-text-dim:     rgba(230,237,243,0.38);
+  --c-accent:       #58a6ff;
+  --c-accent-bg:    rgba(88,166,255,0.14);
+  --c-accent-border:rgba(88,166,255,0.45);
+  --c-accent-text:  #a5c8ff;
+  --c-btn-bg:       rgba(255,255,255,0.07);
+  --c-btn-active:   #2f3850;
+  --c-input-bg:     #2d333b;
+  --c-danger:       #ff6060;
+  --c-warning:      rgba(255,185,80,0.85);
+  --c-toggle-track: rgba(255,255,255,0.12);
+  --c-toggle-active:#58a6ff;
+  --ring-preview-bg:#0d1117;
+  --ring-seg-bg:          #21262d;
+  --ring-seg-bg-active:   #2d3a5a;
+  --ring-seg-border:      rgba(255,255,255,0.10);
+  --ring-seg-border-active:rgba(255,255,255,0.32);
+  --ring-text:            rgba(230,237,243,0.78);
+  --ring-text-active:     rgba(230,237,243,1);
+  --ring-center-dot:      rgba(255,255,255,0.15);
+  --ring-center-core:     rgba(255,255,255,0.52);
+  --ring-guide:           rgba(255,255,255,0.04);
+  --ring-accent:          #58a6ff;
+  --ring-icon-color:      #ffffff;
+}
+
+/* ── Theme: Light ── */
+:root[data-theme='light'] {
+  --c-bg:           #f6f8fa;
+  --c-surface:      #ffffff;
+  --c-elevated:     #f0f2f5;
+  --c-border:       rgba(0,0,0,0.12);
+  --c-border-sub:   rgba(0,0,0,0.06);
+  --c-text:         #1f2328;
+  --c-text-muted:   #636c76;
+  --c-text-dim:     rgba(31,35,40,0.45);
+  --c-accent:       #0969da;
+  --c-accent-bg:    rgba(9,105,218,0.08);
+  --c-accent-border:rgba(9,105,218,0.40);
+  --c-accent-text:  #0550ae;
+  --c-btn-bg:       rgba(0,0,0,0.05);
+  --c-btn-active:   rgba(9,105,218,0.12);
+  --c-input-bg:     #ffffff;
+  --c-danger:       #d1242f;
+  --c-warning:      rgba(155,100,0,0.90);
+  --c-toggle-track: rgba(0,0,0,0.12);
+  --c-toggle-active:#0969da;
+  --ring-preview-bg:#e8ecf1;
+  --ring-seg-bg:          #e8eaed;
+  --ring-seg-bg-active:   #cfe2ff;
+  --ring-seg-border:      rgba(0,0,0,0.12);
+  --ring-seg-border-active:rgba(9,105,218,0.50);
+  --ring-text:            rgba(31,35,40,0.80);
+  --ring-text-active:     rgba(31,35,40,1);
+  --ring-center-dot:      rgba(0,0,0,0.12);
+  --ring-center-core:     rgba(0,0,0,0.45);
+  --ring-guide:           rgba(0,0,0,0.06);
+  --ring-accent:          #0969da;
+  --ring-icon-color:      #1f2328;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  width: 100%;
+  height: 100%;
+}
+
+body {
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(128,128,128,0.05);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(128,128,128,0.2);
+  border-radius: 3px;
+}
+
+input[type="range"] {
+  height: 4px;
+  cursor: pointer;
+}
+
+select option {
+  background: var(--c-elevated);
+  color: var(--c-text);
+}

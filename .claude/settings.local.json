@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(ls:*)",
+      "Bash(timeout 10 npm run dev)",
+      "Bash(grep -r ELECTRON_RENDERER_URL F:/Project/ActionRing/node_modules/electron-vite/dist/ --include=*.js -l)",
+      "Bash(grep -r \"rollupOptions\\\\|input\\\\|html\" F:/Project/ActionRing/node_modules/vite/dist/node/chunks/dep-*.cjs)",
+      "Bash(grep -r \"ELECTRON_RENDERER_URL\\\\|renderer.*root\\\\|rendererUrl\" F:ProjectActionRingnode_moduleselectron-vitedist --include=*.js -l)",
+      "Bash(node -e \"const ev = require\\(''''F:/Project/ActionRing/node_modules/electron-vite/dist/index.cjs''''\\); console.log\\(Object.keys\\(ev\\)\\)\")",
+      "Bash(node -e \":*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(find F:/Project/ActionRing/shared -name *.ts -o -name *.tsx)"
+    ]
+  }
+}

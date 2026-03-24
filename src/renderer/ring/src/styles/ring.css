@@ -1,0 +1,82 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+html, body {
+  background: transparent;
+  overflow: hidden;
+}
+
+/* ── Ring theme: Dark ── */
+:root,
+:root[data-theme='dark'] {
+  --ring-seg-bg:          #21262d;
+  --ring-seg-bg-active:   #2d3a5a;
+  --ring-seg-border:      rgba(255,255,255,0.10);
+  --ring-seg-border-active:rgba(255,255,255,0.32);
+  --ring-text:            rgba(230,237,243,0.78);
+  --ring-text-active:     rgba(230,237,243,1);
+  --ring-center-dot:      rgba(255,255,255,0.15);
+  --ring-center-core:     rgba(255,255,255,0.52);
+  --ring-guide:           rgba(255,255,255,0.04);
+  --ring-accent:          #58a6ff;
+  --ring-icon-color:      #ffffff;
+}
+
+/* ── Ring theme: Light ── */
+:root[data-theme='light'] {
+  --ring-seg-bg:          #e8eaed;
+  --ring-seg-bg-active:   #cfe2ff;
+  --ring-seg-border:      rgba(0,0,0,0.12);
+  --ring-seg-border-active:rgba(9,105,218,0.50);
+  --ring-text:            rgba(31,35,40,0.80);
+  --ring-text-active:     rgba(31,35,40,1);
+  --ring-center-dot:      rgba(0,0,0,0.12);
+  --ring-center-core:     rgba(0,0,0,0.45);
+  --ring-guide:           rgba(0,0,0,0.06);
+  --ring-accent:          #0969da;
+  --ring-icon-color:      #1f2328;
+}
+
+@keyframes ring-expand {
+  from {
+    transform: scale(0.72);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes ring-collapse {
+  from {
+    transform: scale(1);
+    opacity: 1;
+  }
+  to {
+    transform: scale(0.72);
+    opacity: 0;
+  }
+}
+
+.ring-entering {
+  animation-name: ring-expand;
+  animation-timing-function: cubic-bezier(0.2, 0, 0, 1);
+  animation-fill-mode: forwards;
+}
+
+.ring-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.ring-exiting {
+  animation-name: ring-collapse;
+  animation-timing-function: cubic-bezier(1, 0, 0.8, 1);
+  animation-fill-mode: forwards;
+}
