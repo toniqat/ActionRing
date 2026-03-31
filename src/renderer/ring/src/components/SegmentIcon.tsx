@@ -4,9 +4,10 @@ interface SegmentIconProps {
   icon: string
   iconIsCustom: boolean
   size?: number
+  color?: string
 }
 
-export function SegmentIcon({ icon, iconIsCustom, size = 24 }: SegmentIconProps): JSX.Element {
+export function SegmentIcon({ icon, iconIsCustom, size = 24, color }: SegmentIconProps): JSX.Element {
   if (iconIsCustom) {
     return (
       <img
@@ -34,7 +35,7 @@ export function SegmentIcon({ icon, iconIsCustom, size = 24 }: SegmentIconProps)
 
   return (
     <span
-      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: size, height: size, flexShrink: 0, color: 'var(--ring-icon-color)' }}
+      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: size, height: size, flexShrink: 0, color: color ?? 'var(--ring-icon-color)' }}
       dangerouslySetInnerHTML={{ __html: builtinIcon.svg.replace('width="24" height="24"', `width="${size}" height="${size}"`) }}
     />
   )

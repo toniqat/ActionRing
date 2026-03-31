@@ -46,7 +46,7 @@ export function RingSegment({
         r={BUTTON_RADIUS}
         opacity={0.93}
         style={{
-          fill: isHighlighted ? 'var(--ring-seg-bg-active)' : 'var(--ring-seg-bg)',
+          fill: isHighlighted ? 'var(--ring-seg-bg-active)' : (slot.bgColor ?? 'var(--ring-seg-bg)'),
           stroke: isFolderOpen ? 'var(--ring-accent, #6060ff)' : isHighlighted ? 'var(--ring-seg-border-active)' : 'var(--ring-seg-border)',
           strokeWidth: isFolderOpen ? 2 : isHighlighted ? 1.5 : 1,
           transition: 'fill 0.1s ease, stroke 0.1s ease',
@@ -88,11 +88,11 @@ export function RingSegment({
                 gap: 3,
               }}
             >
-              <SegmentIcon icon={slot.icon} iconIsCustom={slot.iconIsCustom} size={iconSize} />
+              <SegmentIcon icon={slot.icon} iconIsCustom={slot.iconIsCustom} size={iconSize} color={slot.iconColor} />
               {showText && (
                 <span
                   style={{
-                    color: isHighlighted ? 'var(--ring-text-active)' : 'var(--ring-text)',
+                    color: slot.textColor ?? (isHighlighted ? 'var(--ring-text-active)' : 'var(--ring-text)'),
                     fontSize: `${fontSize}px`,
                     fontFamily: 'system-ui, sans-serif',
                     textAlign: 'center',

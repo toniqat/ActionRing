@@ -24,8 +24,10 @@ export function useRingAnimation(
 
   useEffect(() => {
     if (visible) {
-      // Only start entering animation if we are not already entering or visible
-      if (phaseRef.current === 'entering' || phaseRef.current === 'visible') return
+      // Only start entering animation if we are not already entering, visible, or mid-exit.
+      // Guarding 'exiting' prevents the animation from restarting if a second IPC_RING_SHOW
+      // somehow arrives while the exit animation is still in progress.
+      if (phaseRef.current === 'entering' || phaseRef.current === 'visible' || phaseRef.current === 'exiting') return
       phaseRef.current = 'entering'
       setPhase('entering')
       const t = setTimeout(() => {

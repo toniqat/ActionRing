@@ -11,7 +11,20 @@
       "Bash(node -e \":*)",
       "Bash(npx tsc:*)",
       "Bash(npm run:*)",
-      "Bash(find F:/Project/ActionRing/shared -name *.ts -o -name *.tsx)"
+      "Bash(find F:/Project/ActionRing/shared -name *.ts -o -name *.tsx)",
+      "Bash(grep -o \"\"data-[^\"\"]*\"\":[^,}]* F:/Project/ActionRing/node_modules/react-resizable-panels/dist/react-resizable-panels.js)",
+      "Bash(node:*)",
+      "Bash(grep -rn \"Go Back\\\\|goBack\\\\|go_back\\\\|back.*nav\\\\|backNav\\\\|← Ring\\\\|back.*slot\\\\|label.*back\\\\|back.*label\" F:/Project/ActionRing/src F:/Project/ActionRing/shared --include=*.ts --include=*.tsx -i)",
+      "mcp__ide__getDiagnostics",
+      "Bash(grep -E \"\\\\.\\(json|js|ts|md\\)$|^d\")",
+      "Bash(wc -l ./src/main/*.ts ./src/preload/*.ts ./shared/*.ts)",
+      "Bash(find . -not -path ./.git/* -not -path ./node_modules/* -not -path ./build/* -not -path ./out/* -type f -exec file {})",
+      "Bash(2)",
+      "Bash(find . -not -path ./.git/* -not -path ./node_modules/* -not -path ./out/* -not -path ./build/*)",
+      "Bash(python3 -c \":*)",
+      "Bash(python -c \":*)",
+      "Bash(CSC_IDENTITY_AUTO_DISCOVERY=false WIN_CSC_LINK=\"\" npm run build:win)",
+      "Bash(python:*)"
     ]
   }
 }

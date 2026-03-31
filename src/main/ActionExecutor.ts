@@ -3,6 +3,12 @@ import { shell } from 'electron'
 import type { ActionConfig, SystemActionId } from '@shared/config.types'
 
 export class ActionExecutor {
+  async executeAll(actions: ActionConfig[]): Promise<void> {
+    for (const action of actions) {
+      await this.execute(action)
+    }
+  }
+
   async execute(action: ActionConfig): Promise<void> {
     switch (action.type) {
       case 'launch':
@@ -103,15 +109,17 @@ export class ActionExecutor {
   }
 
   private toPowerShellKeys(keys: string): string {
+    // Case-insensitive to handle both legacy lowercase (ctrl+) and display format (Ctrl+)
     return keys
-      .replace('ctrl+', '^')
-      .replace('alt+', '%')
-      .replace('shift+', '+')
-      .replace('win+', '^{ESC}')
+      .replace(/ctrl\+/gi, '^')
+      .replace(/alt\+/gi, '%')
+      .replace(/shift\+/gi, '+')
+      .replace(/(?:win|meta)\+/gi, '^{ESC}')
+      .replace(/space/gi, ' ')
   }
 
   private toAppleScriptKeys(keys: string): string {
     // Simplified — just return the last part for now
-    return keys.split('+').pop() || keys
+    return keys.split('+').pop()?.toLowerCase() || keys
   }
 }

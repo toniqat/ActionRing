@@ -34,7 +34,7 @@ export function App(): JSX.Element {
       document.documentElement.dataset.theme = payload.resolvedTheme
       // Ring window is positioned so cursor is at center
       // Use the same halfSize formula as HookManager so center aligns with cursor
-      const hasFolders = payload.slots.some((s) => s.action.type === 'folder')
+      const hasFolders = payload.slots.some((s) => s.actions[0]?.type === 'folder')
       const subMultiplier = hasFolders ? (payload.appearance.folderSubRadiusMultiplier ?? 2.0) : 1.0
       const halfSize = Math.round(payload.appearance.ringRadius * subMultiplier + 60)
       setCenter({ x: halfSize, y: halfSize })

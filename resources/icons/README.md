@@ -1,23 +1,31 @@
 # resources/icons/
 
-This directory must contain the following icon files before building or running the app.
-They are NOT included in the repository and must be created or sourced manually.
+Icon assets used for the application window, taskbar, and system tray.
 
-## Required Files
+## Files
 
-| File | Used For | Format | Recommended Size |
-|---|---|---|---|
-| `tray-icon.png` | System tray icon (all platforms, dev mode) | PNG, transparent background | 16x16 or 22x22 px |
-| `tray-icon@2x.png` | System tray icon (macOS Retina) | PNG, transparent background | 32x32 or 44x44 px |
-| `app-icon.ico` | Windows app icon (taskbar, installer) | ICO (multi-size: 16/32/48/256) | Multi-size ICO |
-| `app-icon.icns` | macOS app icon (Dock, Finder) | ICNS | 1024x1024 source |
+| File | Used For | Format |
+|---|---|---|
+| `icon.ico` | Windows app icon (taskbar, window frame) + tray icon | ICO (multi-size: 16/32/48/256) |
+| `icon.svg` | macOS/Linux app icon (Dock, Finder) + tray icon | SVG |
+| `tray-icon.svg` | Alternative tray icon (not currently referenced in code) | SVG |
 
-## Notes
+## How icons are loaded
 
-- The tray icon will gracefully fall back to an empty (invisible) icon if the file is missing at runtime.
-- The build will fail for `build:win` if `app-icon.ico` is missing.
-- The build will fail for `build:mac` if `app-icon.icns` is missing.
-- You can generate `.ico` and `.icns` from a high-resolution PNG using tools such as:
+`WindowManager.ts` and `TrayManager.ts` select the icon at runtime:
+```ts
+const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon.svg'
+```
+
+`package.json` electron-builder config also references:
+- `resources/icons/icon.ico` — Windows build
+- `resources/icons/icon.svg` — macOS build
+
+## Build requirements
+
+- `build:win` requires `icon.ico` to be present — the build will fail without it.
+- `build:mac` requires `icon.svg` (or an `.icns`) to be present.
+- To regenerate icons from a high-resolution PNG, use tools such as:
   - `electron-icon-builder` (npm)
   - `png2icons` (npm)
-  - Online converters (e.g. https://cloudconvert.com)
+  - Online converters (e.g. cloudconvert.com)
