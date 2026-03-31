@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain } from 'electron'
 import type { ConfigStore } from '../ConfigStore'
 import type { ActionExecutor } from '../ActionExecutor'
 import type { WindowManager } from '../WindowManager'
@@ -11,14 +11,16 @@ import {
 export function registerRingHandlers(
   configStore: ConfigStore,
   actionExecutor: ActionExecutor,
-  windowManager: WindowManager
+  _windowManager: WindowManager
 ): void {
   ipcMain.on(IPC_RING_EXECUTE, (_event, payload: RingExecutePayload) => {
-    windowManager.hideRing()
-    actionExecutor.execute(payload.slot.action).catch(console.error)
+    // Do NOT hide the window here. The ring renderer already called setVisible(false),
+    // which plays the exit animation. The window is hidden by HookManager when it
+    // receives IPC_RING_IDLE after the animation completes.
+    actionExecutor.executeAll(payload.slot.actions).catch(console.error)
   })
 
   ipcMain.on(IPC_RING_DISMISS, () => {
-    windowManager.hideRing()
+    // Same as above — let the exit animation run to completion before the window hides.
   })
 }

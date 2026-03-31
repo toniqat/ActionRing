@@ -4,6 +4,11 @@ import { SegmentIcon } from './SegmentIcon'
 import { useSegmentHitTest } from '../hooks/useSegmentHitTest'
 import type { SlotConfig } from '@shared/config.types'
 
+// ─── Debug flag ───────────────────────────────────────────────────────────────
+// Set to true to render sector-boundary lines and dead-zone circle over the ring.
+// Each wedge is colored and boundary lines show exact detection borders.
+const DEBUG_SECTORS = false
+
 /** Direct bounding-box hit test for primary ring slots (used while sub-slots are open).
  *  Returns the index of the first primary slot whose button circle contains (mouseX, mouseY),
  *  skipping excludeIndex (the currently active folder). */
@@ -119,7 +124,7 @@ export function RingCanvas({
   const svgRef = useRef<SVGSVGElement>(null)
 
   const subRadius = radius * folderSubRadiusMultiplier
-  const hasFolders = slots.some((s) => s.action.type === 'folder')
+  const hasFolders = slots.some((s) => s.actions[0]?.type === 'folder')
   const maxRadius = hasFolders ? subRadius : radius
   const size = (maxRadius + 60) * 2
 
@@ -174,7 +179,7 @@ export function RingCanvas({
         // === Normal mode: sector-based selection ===
         setHighlightedIndex(sectorIdx)
 
-        if (sectorIdx !== null && slots[sectorIdx]?.action.type === 'folder') {
+        if (sectorIdx !== null && slots[sectorIdx]?.actions[0]?.type === 'folder') {
           setActiveFolderIndex(sectorIdx)
           const folderAngle = sectorIdx * ((2 * Math.PI) / slots.length) - Math.PI / 2
           const subSlots = slots[sectorIdx].subSlots ?? []
@@ -195,7 +200,7 @@ export function RingCanvas({
       if (activeFolderIndex !== null && highlightedSubIndex !== null) {
         const subSlot = slots[activeFolderIndex]?.subSlots?.[highlightedSubIndex] ?? null
         onSegmentRelease(subSlot)
-      } else if (highlightedIndex !== null && slots[highlightedIndex]?.action.type !== 'folder') {
+      } else if (highlightedIndex !== null && slots[highlightedIndex]?.actions[0]?.type !== 'folder') {
         onSegmentRelease(slots[highlightedIndex])
       } else {
         onSegmentRelease(null)
@@ -232,7 +237,7 @@ export function RingCanvas({
 
       {/* Sub-ring slots for each folder */}
       {slots.map((slot, folderIdx) => {
-        if (slot.action.type !== 'folder') return null
+        if (slot.actions[0]?.type !== 'folder') return null
         const subSlots = slot.subSlots ?? []
         if (subSlots.length === 0) return null
 
@@ -267,7 +272,7 @@ export function RingCanvas({
                     r={BUTTON_RADIUS}
                     opacity={0.93}
                     style={{
-                      fill: isHighlighted ? 'var(--ring-seg-bg-active)' : 'var(--ring-seg-bg)',
+                      fill: isHighlighted ? 'var(--ring-seg-bg-active)' : (sub.bgColor ?? 'var(--ring-seg-bg)'),
                       stroke: isHighlighted ? 'var(--ring-seg-border-active)' : 'var(--ring-seg-border)',
                       strokeWidth: isHighlighted ? 1.5 : 1,
                       transition: 'fill 0.1s ease, stroke 0.1s ease',
@@ -302,11 +307,11 @@ export function RingCanvas({
                         gap: 3,
                       }}
                     >
-                      <SegmentIcon icon={sub.icon} iconIsCustom={sub.iconIsCustom} size={iconSize} />
+                      <SegmentIcon icon={sub.icon} iconIsCustom={sub.iconIsCustom} size={iconSize} color={sub.iconColor} />
                       {showText && (
                         <span
                           style={{
-                            color: isHighlighted ? 'var(--ring-text-active)' : 'var(--ring-text)',
+                            color: sub.textColor ?? (isHighlighted ? 'var(--ring-text-active)' : 'var(--ring-text)'),
                             fontSize: `${fontSize}px`,
                             fontFamily: 'system-ui, sans-serif',
                             textAlign: 'center',
@@ -330,6 +335,63 @@ export function RingCanvas({
           </g>
         )
       })}
+
+      {/* Debug: sector boundaries and dead-zone — enable with DEBUG_SECTORS */}
+      {DEBUG_SECTORS && (() => {
+        const n = slots.length
+        const segAngle = (2 * Math.PI) / n
+        const outerR = radius + buttonSize + 12
+        const COLORS = ['#ff4444','#ff9900','#ffee00','#44ff44','#00ffee','#4488ff','#aa44ff','#ff44aa']
+        return (
+          <g>
+            {/* Sector wedges */}
+            {Array.from({ length: n }, (_, i) => {
+              // Sector spans (i-0.5)·segAngle to (i+0.5)·segAngle in North-ref.
+              // SVG uses East-ref (y-down), so subtract π/2.
+              const a0 = (i - 0.5) * segAngle - Math.PI / 2
+              const a1 = (i + 0.5) * segAngle - Math.PI / 2
+              const x0 = Math.cos(a0) * outerR, y0 = Math.sin(a0) * outerR
+              const x1 = Math.cos(a1) * outerR, y1 = Math.sin(a1) * outerR
+              return (
+                <path
+                  key={`dbg-wedge-${i}`}
+                  d={`M 0 0 L ${x0} ${y0} A ${outerR} ${outerR} 0 0 1 ${x1} ${y1} Z`}
+                  fill={COLORS[i % COLORS.length]}
+                  opacity={0.18}
+                />
+              )
+            })}
+            {/* Sector boundary lines */}
+            {Array.from({ length: n }, (_, i) => {
+              const a = (i + 0.5) * segAngle - Math.PI / 2
+              return (
+                <line
+                  key={`dbg-line-${i}`}
+                  x1={0} y1={0}
+                  x2={Math.cos(a) * outerR} y2={Math.sin(a) * outerR}
+                  stroke="rgba(255,255,255,0.7)"
+                  strokeWidth={1}
+                  strokeDasharray="4 3"
+                />
+              )
+            })}
+            {/* Inner dead-zone boundary */}
+            <circle cx={0} cy={0} r={30}
+              fill="none"
+              stroke="rgba(255,255,255,0.5)"
+              strokeWidth={1}
+              strokeDasharray="3 2"
+            />
+            {/* Ring radius reference */}
+            <circle cx={0} cy={0} r={radius}
+              fill="none"
+              stroke="rgba(255,255,255,0.25)"
+              strokeWidth={1}
+              strokeDasharray="3 3"
+            />
+          </g>
+        )
+      })()}
 
       {/* Center crosshair indicator */}
       <circle cx={0} cy={0} r={6} style={{ fill: 'var(--ring-center-dot)' }} />

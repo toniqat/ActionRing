@@ -21,8 +21,12 @@ export function getSegmentIndex(
   angle = angle + Math.PI / 2    // rotate so 0 = north
   if (angle < 0) angle += 2 * Math.PI // normalize to 0–2π
 
+  // Each slot i is visually centered at i * segmentAngle.
+  // Adding half a segment before flooring ensures the detection sector is
+  // centered on the button rather than starting at its position.
+  // Sector for slot i: [(i - 0.5) * segmentAngle, (i + 0.5) * segmentAngle)
   const segmentAngle = (2 * Math.PI) / numSlots
-  const index = Math.floor(angle / segmentAngle) % numSlots
+  const index = Math.floor((angle + segmentAngle / 2) / segmentAngle) % numSlots
   return index
 }
 

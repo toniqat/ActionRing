@@ -6,21 +6,32 @@ React 18 + TypeScript settings window for ActionRing.
 
 ```
 src/
-├── App.tsx                       # Root: tab bar (General | Configure | About)
-├── main.tsx                      # Entry point, imports Tailwind CSS
+├── App.tsx                            # Root: tab bar (General | Configure | About)
+├── main.tsx                           # Entry point, imports Tailwind CSS
 ├── context/
-│   └── SettingsContext.tsx       # Global draft config state + slot selection + anim preview trigger
+│   └── SettingsContext.tsx            # Global draft config state + slot selection + anim preview trigger
 ├── components/
+│   ├── WinControls.tsx                # Custom frameless window title bar controls (min/max/close)
 │   ├── tabs/
-│   │   ├── GeneralTab.tsx        # Trigger config, startup toggle
-│   │   └── AboutTab.tsx          # Branding / version
+│   │   ├── GeneralTab.tsx             # Trigger config, startup toggle, language selector
+│   │   ├── AboutTab.tsx               # Branding / version info
+│   │   ├── AppearanceTab.tsx          # Legacy — kept for reference, not shown in tab bar
+│   │   ├── RadiusTab.tsx              # Legacy — kept for reference, not shown in tab bar
+│   │   └── SlotsTab.tsx               # Legacy — kept for reference, not shown in tab bar
 │   └── unified/
-│       ├── UnifiedTab.tsx        # 3-panel layout wrapper (Configure tab)
-│       ├── LeftPanel.tsx         # Global settings: radius, button size, opacity, animation speed
-│       ├── RingPreview.tsx       # Interactive SVG ring preview (center panel)
-│       └── SlotEditPanel.tsx     # Slot editor (right panel, slides in on slot click)
+│       ├── UnifiedTab.tsx             # 3-panel layout wrapper (Configure tab)
+│       ├── LeftPanel.tsx              # Global settings: radius, button size, opacity, animation speed
+│       ├── RingPreview.tsx            # Interactive SVG ring preview (center panel)
+│       ├── SlotEditPanel.tsx          # Slot editor (right panel, slides in on slot click)
+│       ├── AddAppOverlay.tsx          # Modal overlay for adding an app/profile entry
+│       ├── AppCarousel.tsx            # Horizontal carousel for selecting among app profiles
+│       ├── AppearanceEditor.tsx       # Full appearance editor (shared with appearance renderer)
+│       └── ShortcutsModal.tsx         # Keyboard shortcuts reference modal
+├── i18n/
+│   ├── I18nContext.tsx                # Translation context provider + useT() hook
+│   └── locales.ts                     # Locale string maps (en, ko, …)
 └── styles/
-    └── settings.css              # Tailwind directives + scrollbar / base overrides
+    └── settings.css                   # Tailwind directives + scrollbar / base overrides
 ```
 
 ## Configure Tab Layout

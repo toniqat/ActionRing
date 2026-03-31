@@ -1,12 +1,26 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
-import type { AppConfig, SlotConfig, ModifierKey } from '@shared/config.types'
+import type {
+  AppConfig, SlotConfig, ModifierKey,
+  AppearanceConfig, AppEntry, AppProfile,
+  // Legacy (migration only)
+  Profile,
+} from '@shared/config.types'
 
-const CONFIG_VERSION = 4
+const CONFIG_VERSION = 7
 
 function generateId(): string {
   return Math.random().toString(36).slice(2, 10)
+}
+
+const DEFAULT_APPEARANCE: AppearanceConfig = {
+  ringRadius: 80,
+  buttonSize: 32,
+  iconSize: 18,
+  showText: false,
+  opacity: 0.92,
+  animationSpeed: 'normal'
 }
 
 const DEFAULT_SLOTS: SlotConfig[] = [
@@ -15,7 +29,7 @@ const DEFAULT_SLOTS: SlotConfig[] = [
     label: 'Browser',
     icon: 'browser',
     iconIsCustom: false,
-    action: { type: 'system', action: 'show-desktop' },
+    actions: [{ type: 'system', action: 'show-desktop' }],
     enabled: true
   },
   {
@@ -23,7 +37,7 @@ const DEFAULT_SLOTS: SlotConfig[] = [
     label: 'File Explorer',
     icon: 'folder',
     iconIsCustom: false,
-    action: { type: 'launch', target: process.platform === 'win32' ? 'explorer.exe' : 'open' },
+    actions: [{ type: 'launch', target: process.platform === 'win32' ? 'explorer.exe' : 'open' }],
     enabled: true
   },
   {
@@ -31,7 +45,7 @@ const DEFAULT_SLOTS: SlotConfig[] = [
     label: 'Play / Pause',
     icon: 'play',
     iconIsCustom: false,
-    action: { type: 'system', action: 'play-pause' },
+    actions: [{ type: 'system', action: 'play-pause' }],
     enabled: true
   },
   {
@@ -39,7 +53,7 @@ const DEFAULT_SLOTS: SlotConfig[] = [
     label: 'Volume Up',
     icon: 'volume-up',
     iconIsCustom: false,
-    action: { type: 'system', action: 'volume-up' },
+    actions: [{ type: 'system', action: 'volume-up' }],
     enabled: true
   },
   {
@@ -47,7 +61,7 @@ const DEFAULT_SLOTS: SlotConfig[] = [
     label: 'Volume Down',
     icon: 'volume-down',
     iconIsCustom: false,
-    action: { type: 'system', action: 'volume-down' },
+    actions: [{ type: 'system', action: 'volume-down' }],
     enabled: true
   },
   {
@@ -55,7 +69,7 @@ const DEFAULT_SLOTS: SlotConfig[] = [
     label: 'Screenshot',
     icon: 'screenshot',
     iconIsCustom: false,
-    action: { type: 'system', action: 'screenshot' },
+    actions: [{ type: 'system', action: 'screenshot' }],
     enabled: true
   },
   {
@@ -63,7 +77,7 @@ const DEFAULT_SLOTS: SlotConfig[] = [
     label: 'Lock Screen',
     icon: 'lock',
     iconIsCustom: false,
-    action: { type: 'system', action: 'lock-screen' },
+    actions: [{ type: 'system', action: 'lock-screen' }],
     enabled: true
   },
   {
@@ -71,32 +85,46 @@ const DEFAULT_SLOTS: SlotConfig[] = [
     label: 'Calculator',
     icon: 'calculator',
     iconIsCustom: false,
-    action: {
-      type: 'launch',
-      target: process.platform === 'win32' ? 'calc.exe' : 'open -a Calculator'
-    },
+    actions: [{ type: 'launch', target: process.platform === 'win32' ? 'calc.exe' : 'open -a Calculator' }],
     enabled: true
   }
 ]
 
-const DEFAULT_CONFIG: AppConfig = {
-  version: CONFIG_VERSION,
-  enabled: true,
-  trigger: {
-    button: 3,
-    modifiers: []
-  },
-  slots: DEFAULT_SLOTS,
-  appearance: {
-    ringRadius: 80,
-    buttonSize: 32,
-    iconSize: 18,
-    showText: false,
-    opacity: 0.92,
-    animationSpeed: 'normal'
-  },
-  startOnLogin: false,
-  theme: 'dark'
+function cloneSlots(slots: SlotConfig[]): SlotConfig[] {
+  return JSON.parse(JSON.stringify(slots))
+}
+
+function makeDefaultAppEntry(slots: SlotConfig[], appearance: AppearanceConfig): AppEntry {
+  const profileId = generateId()
+  return {
+    id: 'default',
+    displayName: 'Default System',
+    profiles: [
+      {
+        id: profileId,
+        name: 'Default',
+        slots: cloneSlots(slots),
+        appearance: { ...appearance },
+      },
+    ],
+    activeProfileId: profileId,
+  }
+}
+
+function buildDefaultConfig(): AppConfig {
+  const defaultEntry = makeDefaultAppEntry(DEFAULT_SLOTS, DEFAULT_APPEARANCE)
+  const activeProfile = defaultEntry.profiles[0]
+  return {
+    version: CONFIG_VERSION,
+    enabled: true,
+    trigger: { button: 3, modifiers: [] },
+    slots: activeProfile.slots,
+    appearance: activeProfile.appearance,
+    startOnLogin: false,
+    theme: 'dark',
+    language: 'en',
+    apps: [defaultEntry],
+  }
 }
 
 export class ConfigStore {
@@ -112,40 +140,156 @@ export class ConfigStore {
 
   private load(): AppConfig {
     if (!existsSync(this.configPath)) {
-      this.save(DEFAULT_CONFIG)
-      return { ...DEFAULT_CONFIG }
+      const cfg = buildDefaultConfig()
+      this.persist(cfg)
+      return cfg
     }
     try {
       const raw = readFileSync(this.configPath, 'utf-8')
-      const parsed = JSON.parse(raw) as AppConfig
-      // Basic migration: fill in missing fields with defaults
-      let config: AppConfig = { ...DEFAULT_CONFIG, ...parsed }
-      // v1 → v2: fix incorrect middle-click button code (2 was right-click, 3 is middle)
-      if ((parsed.version ?? 1) < 2 && config.trigger.button === 2) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const parsed = JSON.parse(raw) as any
+      let config = parsed as AppConfig
+
+      // ── v1 → v2: fix incorrect middle-click button code ──────────────────
+      if ((parsed.version ?? 1) < 2 && config.trigger?.button === 2) {
         config = { ...config, trigger: { ...config.trigger, button: 3 }, version: 2 }
       }
-      // v2 → v3: migrate single modifier string to modifiers array
+      // ── v2 → v3: migrate single modifier string to array ─────────────────
       if ((parsed.version ?? 1) < 3) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const oldModifier = (parsed.trigger as any)?.modifier as string | undefined
+        const oldModifier = parsed.trigger?.modifier as string | undefined
         const modifiers: ModifierKey[] =
-          oldModifier && oldModifier !== 'none'
-            ? [oldModifier as ModifierKey]
-            : []
+          oldModifier && oldModifier !== 'none' ? [oldModifier as ModifierKey] : []
         config = { ...config, trigger: { button: config.trigger.button, modifiers }, version: 3 }
-        this.save(config)
       }
-      // v3 → v4: add theme field
+      // ── v3 → v4: add theme field ──────────────────────────────────────────
       if ((parsed.version ?? 1) < 4) {
         config = { ...config, theme: 'dark', version: 4 }
-        this.save(config)
       }
+      // ── v4 → v5: migrate single `action` to `actions` array ──────────────
+      if ((parsed.version ?? 1) < 5) {
+        const migrateSlots = (slots: SlotConfig[]): SlotConfig[] =>
+          slots.map((s) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const legacy = s as any
+            const actions = legacy.actions ?? (legacy.action ? [legacy.action] : [{ type: 'shell', command: '' }])
+            return { ...s, actions, subSlots: s.subSlots ? migrateSlots(s.subSlots) : undefined }
+          })
+        config = { ...config, slots: migrateSlots(config.slots ?? []), version: 5 }
+      }
+      // ── v5 → v6: wrap slots + appearance into a Default profile ──────────
+      if ((parsed.version ?? 1) < 6) {
+        const legacySlots: SlotConfig[] = (config as AppConfig & { slots?: SlotConfig[] }).slots ?? DEFAULT_SLOTS
+        const legacyAppearance: AppearanceConfig =
+          (config as AppConfig & { appearance?: AppearanceConfig }).appearance ?? DEFAULT_APPEARANCE
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const legacyProfileId = generateId()
+        const legacyProfile: Profile = {
+          id: legacyProfileId,
+          name: 'Default',
+          defaultSlots: legacySlots,
+          appearance: legacyAppearance,
+          appOverrides: [],
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(config as any).profiles = [legacyProfile]
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ;(config as any).activeProfileId = legacyProfileId
+        config = { ...config, version: 6 }
+      }
+      // ── v6 → v7: replace profiles + appOverrides with apps ───────────────
+      if ((parsed.version ?? 1) < 7) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const v6 = config as any
+        const profiles: Profile[] = v6.profiles ?? []
+        const activeProfileId: string = v6.activeProfileId ?? ''
+        const activeProfile: Profile =
+          profiles.find((p: Profile) => p.id === activeProfileId) ?? profiles[0]
+
+        if (activeProfile) {
+          // Default System entry from the active profile's defaultSlots
+          const defaultProfileId = generateId()
+          const defaultEntry: AppEntry = {
+            id: 'default',
+            displayName: 'Default System',
+            profiles: [
+              {
+                id: defaultProfileId,
+                name: 'Default',
+                slots: cloneSlots(activeProfile.defaultSlots),
+                appearance: { ...activeProfile.appearance },
+              },
+            ],
+            activeProfileId: defaultProfileId,
+          }
+
+          // One app entry per appOverride in the active profile
+          const appEntries: AppEntry[] = activeProfile.appOverrides.map((o) => {
+            const profileId = generateId()
+            return {
+              id: generateId(),
+              exeName: o.exeName,
+              displayName: o.displayName || o.exeName,
+              profiles: [
+                {
+                  id: profileId,
+                  name: 'Default',
+                  slots: cloneSlots(o.slots),
+                  appearance: { ...activeProfile.appearance },
+                },
+              ],
+              activeProfileId: profileId,
+            }
+          })
+
+          config = {
+            ...config,
+            version: 7,
+            slots: defaultEntry.profiles[0].slots,
+            appearance: defaultEntry.profiles[0].appearance,
+            apps: [defaultEntry, ...appEntries],
+          }
+        } else {
+          // No usable profile data — build fresh
+          config = buildDefaultConfig()
+        }
+
+        // Remove legacy fields
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        delete (config as any).profiles
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        delete (config as any).activeProfileId
+      }
+
+      // Ensure top-level slots/appearance always match the Default System's active profile
+      config = this.syncTopLevel(config)
+      this.persist(config)
       return config
     } catch {
       console.error('[ConfigStore] Failed to parse config, using defaults')
-      return { ...DEFAULT_CONFIG }
+      const cfg = buildDefaultConfig()
+      this.persist(cfg)
+      return cfg
     }
   }
+
+  /**
+   * Syncs config.slots and config.appearance to the Default System's active profile.
+   * This ensures the ring renderer always gets the correct default slots.
+   */
+  private syncTopLevel(config: AppConfig): AppConfig {
+    const defaultApp = config.apps.find((a) => a.id === 'default') ?? config.apps[0]
+    if (!defaultApp) return config
+    const profile = defaultApp.profiles.find((p) => p.id === defaultApp.activeProfileId)
+      ?? defaultApp.profiles[0]
+    if (!profile) return config
+    return { ...config, slots: profile.slots, appearance: profile.appearance }
+  }
+
+  private persist(config: AppConfig): void {
+    writeFileSync(this.configPath, JSON.stringify(config, null, 2), 'utf-8')
+  }
+
+  // ── Public API ─────────────────────────────────────────────────────────────
 
   get(): AppConfig {
     return this.config
@@ -153,7 +297,7 @@ export class ConfigStore {
 
   save(config: AppConfig): void {
     this.config = config
-    writeFileSync(this.configPath, JSON.stringify(config, null, 2), 'utf-8')
+    this.persist(config)
   }
 
   update(partial: Partial<AppConfig>): void {
@@ -162,5 +306,211 @@ export class ConfigStore {
 
   toggleEnabled(): void {
     this.update({ enabled: !this.config.enabled })
+  }
+
+  reset(): AppConfig {
+    const cfg = buildDefaultConfig()
+    this.config = cfg
+    this.persist(cfg)
+    return cfg
+  }
+
+  // ── App queries ────────────────────────────────────────────────────────────
+
+  getDefaultApp(): AppEntry {
+    return this.config.apps.find((a) => a.id === 'default') ?? this.config.apps[0]
+  }
+
+  getAppById(id: string): AppEntry | undefined {
+    return this.config.apps.find((a) => a.id === id)
+  }
+
+  /**
+   * Resolves which slots to show for a given foreground exe name.
+   * Checks each app entry's exeName; if matched, returns that entry's active profile slots.
+   * Falls back to Default System's active profile slots.
+   */
+  resolveSlots(exeName: string | null): SlotConfig[] {
+    if (exeName) {
+      const appEntry = this.config.apps.find(
+        (a) => a.exeName && a.exeName.toLowerCase() === exeName.toLowerCase()
+      )
+      if (appEntry) {
+        const profile = appEntry.profiles.find((p) => p.id === appEntry.activeProfileId)
+          ?? appEntry.profiles[0]
+        if (profile) return profile.slots
+      }
+    }
+    const defaultApp = this.getDefaultApp()
+    const defaultProfile = defaultApp.profiles.find((p) => p.id === defaultApp.activeProfileId)
+      ?? defaultApp.profiles[0]
+    return defaultProfile?.slots ?? this.config.slots
+  }
+
+  // ── App mutations ──────────────────────────────────────────────────────────
+
+  /**
+   * Add a new app entry. The first profile is seeded from Default System's active profile slots.
+   */
+  addApp(exeName: string, displayName: string, iconDataUrl?: string): AppEntry {
+    const defaultApp = this.getDefaultApp()
+    const defaultProfile = defaultApp.profiles.find((p) => p.id === defaultApp.activeProfileId)
+      ?? defaultApp.profiles[0]
+
+    const profileId = generateId()
+    const newApp: AppEntry = {
+      id: generateId(),
+      exeName,
+      displayName,
+      iconDataUrl,
+      profiles: [
+        {
+          id: profileId,
+          name: 'Default',
+          slots: cloneSlots(defaultProfile?.slots ?? DEFAULT_SLOTS),
+          appearance: { ...(defaultProfile?.appearance ?? DEFAULT_APPEARANCE) },
+        },
+      ],
+      activeProfileId: profileId,
+    }
+
+    this.config = { ...this.config, apps: [...this.config.apps, newApp] }
+    this.persist(this.config)
+    return newApp
+  }
+
+  removeApp(appId: string): void {
+    if (appId === 'default') return  // Default System cannot be removed
+    const newApps = this.config.apps.filter((a) => a.id !== appId)
+    this.config = this.syncTopLevel({ ...this.config, apps: newApps })
+    this.persist(this.config)
+  }
+
+  /** Update the exe target (exeName, displayName, icon) for an existing app entry. */
+  updateAppTarget(appId: string, exeName: string, displayName: string, iconDataUrl?: string): void {
+    const newApps = this.config.apps.map((a) =>
+      a.id === appId ? { ...a, exeName, displayName, iconDataUrl } : a
+    )
+    this.config = { ...this.config, apps: newApps }
+    this.persist(this.config)
+  }
+
+  /** Update the cached icon data URL for an app entry. */
+  setAppIcon(appId: string, iconDataUrl: string): void {
+    const newApps = this.config.apps.map((a) =>
+      a.id === appId ? { ...a, iconDataUrl } : a
+    )
+    this.config = { ...this.config, apps: newApps }
+    this.persist(this.config)
+  }
+
+  // ── Profile mutations within an app ───────────────────────────────────────
+
+  /**
+   * Add a new profile to an app.
+   * New profile is seeded from Default System's active profile slots (as requested).
+   */
+  addProfileToApp(appId: string, name: string): AppProfile {
+    const defaultApp = this.getDefaultApp()
+    const defaultProfile = defaultApp.profiles.find((p) => p.id === defaultApp.activeProfileId)
+      ?? defaultApp.profiles[0]
+
+    const newProfile: AppProfile = {
+      id: generateId(),
+      name,
+      slots: cloneSlots(defaultProfile?.slots ?? DEFAULT_SLOTS),
+      appearance: { ...(defaultProfile?.appearance ?? DEFAULT_APPEARANCE) },
+    }
+
+    const newApps = this.config.apps.map((a) =>
+      a.id === appId
+        ? { ...a, profiles: [...a.profiles, newProfile], activeProfileId: newProfile.id }
+        : a
+    )
+    this.config = this.syncTopLevel({ ...this.config, apps: newApps })
+    this.persist(this.config)
+    return newProfile
+  }
+
+  removeProfileFromApp(appId: string, profileId: string): void {
+    const app = this.getAppById(appId)
+    if (!app || app.profiles.length <= 1) return  // always keep at least one profile
+
+    const newProfiles = app.profiles.filter((p) => p.id !== profileId)
+    let newActiveProfileId = app.activeProfileId
+    if (newActiveProfileId === profileId) {
+      newActiveProfileId = newProfiles[0].id
+    }
+
+    const newApps = this.config.apps.map((a) =>
+      a.id === appId
+        ? { ...a, profiles: newProfiles, activeProfileId: newActiveProfileId }
+        : a
+    )
+    this.config = this.syncTopLevel({ ...this.config, apps: newApps })
+    this.persist(this.config)
+  }
+
+  renameProfileInApp(appId: string, profileId: string, name: string): void {
+    const newApps = this.config.apps.map((a) =>
+      a.id === appId
+        ? {
+            ...a,
+            profiles: a.profiles.map((p) => (p.id === profileId ? { ...p, name } : p)),
+          }
+        : a
+    )
+    this.config = { ...this.config, apps: newApps }
+    this.persist(this.config)
+  }
+
+  /** Duplicate a profile within an app. The copy becomes the active profile. */
+  duplicateProfileInApp(appId: string, sourceProfileId: string): AppProfile {
+    const appEntry = this.getAppById(appId)
+    if (!appEntry) throw new Error(`App '${appId}' not found`)
+    const source = appEntry.profiles.find((p) => p.id === sourceProfileId)
+    if (!source) throw new Error(`Profile '${sourceProfileId}' not found`)
+
+    const newProfile: AppProfile = {
+      id: generateId(),
+      name: `${source.name} (Copy)`,
+      slots: cloneSlots(source.slots),
+      appearance: { ...source.appearance },
+    }
+
+    const newApps = this.config.apps.map((a) =>
+      a.id === appId
+        ? { ...a, profiles: [...a.profiles, newProfile], activeProfileId: newProfile.id }
+        : a
+    )
+    this.config = this.syncTopLevel({ ...this.config, apps: newApps })
+    this.persist(this.config)
+    return newProfile
+  }
+
+  /**
+   * Set the active profile for an app entry and persist.
+   * Returns the updated AppConfig (synced).
+   */
+  setActiveProfileForApp(appId: string, profileId: string): AppConfig {
+    const app = this.getAppById(appId)
+    if (!app || !app.profiles.find((p) => p.id === profileId)) return this.config
+
+    const newApps = this.config.apps.map((a) =>
+      a.id === appId ? { ...a, activeProfileId: profileId } : a
+    )
+    const updated = this.syncTopLevel({ ...this.config, apps: newApps })
+    this.config = updated
+    this.persist(updated)
+    return updated
+  }
+
+  // ── Legacy compatibility — still used by HookManager ──────────────────────
+
+  getActiveProfile(): { defaultSlots: SlotConfig[]; appearance: AppearanceConfig } {
+    const defaultApp = this.getDefaultApp()
+    const profile = defaultApp.profiles.find((p) => p.id === defaultApp.activeProfileId)
+      ?? defaultApp.profiles[0]
+    return { defaultSlots: profile?.slots ?? this.config.slots, appearance: profile?.appearance ?? this.config.appearance }
   }
 }

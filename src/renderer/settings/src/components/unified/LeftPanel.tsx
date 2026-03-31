@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useSettings } from '../../context/SettingsContext'
+import { useT } from '../../i18n/I18nContext'
 
 export function LeftPanel(): JSX.Element {
+  const t = useT()
   const { draft, updateDraft, setPreviewDraft, triggerAnimPreview } = useSettings()
   const ap = draft.appearance
 
@@ -42,16 +44,16 @@ export function LeftPanel(): JSX.Element {
   return (
     <div
       className="flex-none flex flex-col gap-6 overflow-y-auto"
-      style={{ width: 220, padding: '24px 20px' }}
+      style={{ width: '100%', padding: '24px 20px' }}
     >
       {/* Ring Layout */}
       <section className="flex flex-col gap-4">
-        <h3 style={sectionLabel}>Ring Layout</h3>
+        <h3 style={sectionLabel}>{t('panel.ringLayout')}</h3>
 
         {/* Distance from Cursor */}
         <label className="flex flex-col gap-2">
           <div className="flex justify-between items-baseline">
-            <span style={controlLabel}>Distance</span>
+            <span style={controlLabel}>{t('panel.distance')}</span>
             <span style={valueLabel}>{localRadius}px</span>
           </div>
           <input
@@ -76,7 +78,7 @@ export function LeftPanel(): JSX.Element {
         {/* Button Size */}
         <label className="flex flex-col gap-2">
           <div className="flex justify-between items-baseline">
-            <span style={controlLabel}>Button Size</span>
+            <span style={controlLabel}>{t('panel.buttonSize')}</span>
             <span style={valueLabel}>{localSize}px</span>
           </div>
           <input
@@ -94,14 +96,14 @@ export function LeftPanel(): JSX.Element {
             style={sliderStyle}
           />
           <div className="flex justify-between" style={rangeMinMax}>
-            <span>Small</span><span>Large</span>
+            <span>{t('panel.small')}</span><span>{t('panel.large')}</span>
           </div>
         </label>
 
         {/* Icon Size */}
         <label className="flex flex-col gap-2">
           <div className="flex justify-between items-baseline">
-            <span style={controlLabel}>Icon Size</span>
+            <span style={controlLabel}>{t('panel.iconSize')}</span>
             <span style={valueLabel}>{localIconSize}px</span>
           </div>
           <input
@@ -119,14 +121,14 @@ export function LeftPanel(): JSX.Element {
             style={sliderStyle}
           />
           <div className="flex justify-between" style={rangeMinMax}>
-            <span>Small</span><span>Large</span>
+            <span>{t('panel.small')}</span><span>{t('panel.large')}</span>
           </div>
         </label>
 
         {/* Font Size */}
         <label className="flex flex-col gap-2">
           <div className="flex justify-between items-baseline">
-            <span style={controlLabel}>Text Size</span>
+            <span style={controlLabel}>{t('panel.textSize')}</span>
             <span style={valueLabel}>{localFontSize}px</span>
           </div>
           <input
@@ -150,7 +152,7 @@ export function LeftPanel(): JSX.Element {
 
         {/* Show Text */}
         <div className="flex justify-between items-center">
-          <span style={controlLabel}>Show Text</span>
+          <span style={controlLabel}>{t('panel.showText')}</span>
           <button
             onClick={handleShowTextToggle}
             style={{
@@ -174,12 +176,12 @@ export function LeftPanel(): JSX.Element {
 
       {/* Appearance */}
       <section className="flex flex-col gap-4">
-        <h3 style={sectionLabel}>Appearance</h3>
+        <h3 style={sectionLabel}>{t('panel.appearance')}</h3>
 
         {/* Opacity */}
         <label className="flex flex-col gap-2">
           <div className="flex justify-between items-baseline">
-            <span style={controlLabel}>Opacity</span>
+            <span style={controlLabel}>{t('panel.opacity')}</span>
             <span style={valueLabel}>{localOpacity}%</span>
           </div>
           <input
@@ -204,10 +206,11 @@ export function LeftPanel(): JSX.Element {
 
         {/* Animation Speed */}
         <div className="flex flex-col gap-2">
-          <span style={controlLabel}>Animation Speed</span>
+          <span style={controlLabel}>{t('panel.animSpeed')}</span>
           <div className="flex gap-1.5">
             {(['slow', 'normal', 'fast'] as const).map((speed) => {
               const active = ap.animationSpeed === speed
+              const speedLabel = t(`panel.${speed}` as 'panel.slow' | 'panel.normal' | 'panel.fast')
               return (
                 <button
                   key={speed}
@@ -219,7 +222,7 @@ export function LeftPanel(): JSX.Element {
                     fontSize: 12, fontFamily: 'inherit', transition: 'all 0.15s ease',
                   }}
                 >
-                  {speed.charAt(0).toUpperCase() + speed.slice(1)}
+                  {speedLabel}
                 </button>
               )
             })}
@@ -248,7 +251,7 @@ export function LeftPanel(): JSX.Element {
             e.currentTarget.style.borderColor = 'var(--c-border)'
           }}
         >
-          ▶ Animation Preview
+          {t('panel.animPreview')}
         </button>
       </div>
     </div>

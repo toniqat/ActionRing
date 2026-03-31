@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain, screen, nativeTheme } from 'electron'
 import type { ConfigStore } from './ConfigStore'
+import type { WindowTracker } from './WindowTracker'
 import {
   IPC_RING_SHOW,
   IPC_RING_HIDE,
@@ -17,20 +18,30 @@ const MODIFIER_KEYCODES: Record<string, number[]> = {
 }
 
 const MIN_DISPLAY_MS = 250        // ring stays visible for at least this long
+const POST_IDLE_COOLDOWN_MS = 100 // ignore triggers for this long after exit animation completes
 
 export class HookManager {
   private configStore: ConfigStore
+  private windowTracker: WindowTracker
   private getRingWindow: () => BrowserWindow | null
   private triggerActive = false
   private activeModifiers = new Set<string>()
   private rendererIdle = true     // true once dismissal animation has fully completed
   private showTime = 0            // timestamp when ring was shown (for min-display lock)
   private pendingHide = false     // mouseup arrived during min-display window
+  private lastIdleTime = 0        // timestamp when rendererIdle last became true
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private uiohook: any = null
 
-  constructor(configStore: ConfigStore, getRingWindow: () => BrowserWindow | null) {
+  // ── Mouse capture mode (settings UI) ────────────────────────────────────────
+  private capturingMouse = false
+  private mouseCaptureReady = false   // becomes true after 150ms grace period
+  private mouseCaptureCallback: ((button: number) => void) | null = null
+  private mouseCaptureTimer: ReturnType<typeof setTimeout> | null = null
+
+  constructor(configStore: ConfigStore, windowTracker: WindowTracker, getRingWindow: () => BrowserWindow | null) {
     this.configStore = configStore
+    this.windowTracker = windowTracker
     this.getRingWindow = getRingWindow
   }
 
@@ -40,12 +51,24 @@ export class HookManager {
       this.uiohook = uIOhook
 
       uIOhook.on('mousedown', (e) => {
+        // Mouse capture mode: intercept the very next click for the settings UI
+        if (this.capturingMouse && this.mouseCaptureReady && this.mouseCaptureCallback) {
+          const cb = this.mouseCaptureCallback
+          this.cancelMouseCapture()
+          cb(e.button)
+          return
+        }
+
         const config = this.configStore.get()
         if (!config.enabled) return
         // Prevent double-trigger if ring is already showing (hardware bounce / rapid clicks)
         if (this.triggerActive) return
         // Block re-activation while summoning or dismissal animation is in progress
         if (!this.rendererIdle) return
+        // Debounce: ignore triggers within POST_IDLE_COOLDOWN_MS after exit animation completes.
+        // This prevents a rapid second click (or hardware bounce) from re-showing the ring
+        // immediately after the exit animation finishes, which causes the "double trigger" stutter.
+        if (Date.now() - this.lastIdleTime < POST_IDLE_COOLDOWN_MS) return
         const { button: triggerButton, modifiers: requiredModifiers } = config.trigger
 
         if (e.button === triggerButton) {
@@ -66,8 +89,10 @@ export class HookManager {
           const ringWin = this.getRingWindow()
           if (ringWin) {
             const cursor = screen.getCursorScreenPoint()
-            const enabledSlots = config.slots.filter((s) => s.enabled)
-            const hasFolders = enabledSlots.some((s) => s.action.type === 'folder')
+            // Resolve slots: use app-specific override if available, else active profile defaults
+            const activeExeName = this.windowTracker.getActiveExeName()
+            const enabledSlots = this.configStore.resolveSlots(activeExeName).filter((s) => s.enabled)
+            const hasFolders = enabledSlots.some((s) => s.actions[0]?.type === 'folder')
             const subMultiplier = hasFolders ? (config.appearance.folderSubRadiusMultiplier ?? 2.0) : 1.0
             const halfSize = Math.round(config.appearance.ringRadius * subMultiplier + 60)
             const winSize = halfSize * 2
@@ -111,13 +136,17 @@ export class HookManager {
           }
           const elapsed = Date.now() - this.showTime
           if (elapsed < MIN_DISPLAY_MS) {
-            // Too soon — defer hide until min-display window has passed
-            this.pendingHide = true
-            setTimeout(() => {
-              if (this.pendingHide && this.triggerActive) {
-                this.dismissRing()
-              }
-            }, MIN_DISPLAY_MS - elapsed)
+            // Too soon — defer hide until min-display window has passed.
+            // Guard against scheduling a duplicate timeout if mouseup fires twice
+            // (e.g. hardware bounce or OS double-click) for the same trigger session.
+            if (!this.pendingHide) {
+              this.pendingHide = true
+              setTimeout(() => {
+                if (this.pendingHide && this.triggerActive) {
+                  this.dismissRing()
+                }
+              }, MIN_DISPLAY_MS - elapsed)
+            }
           } else {
             this.dismissRing()
           }
@@ -149,6 +178,7 @@ export class HookManager {
       // This is the authoritative unlock for re-triggering.
       ipcMain.on(IPC_RING_IDLE, () => {
         this.rendererIdle = true
+        this.lastIdleTime = Date.now()
         const ringWin = this.getRingWindow()
         if (ringWin) {
           ringWin.hide()
@@ -169,6 +199,27 @@ export class HookManager {
     const ringWin = this.getRingWindow()
     if (ringWin) {
       ringWin.webContents.send(IPC_RING_HIDE)
+    }
+  }
+
+  startMouseCapture(cb: (button: number) => void): void {
+    this.cancelMouseCapture()
+    this.capturingMouse = true
+    this.mouseCaptureReady = false
+    this.mouseCaptureCallback = cb
+    // 150ms grace period so the click that initiated capture isn't registered
+    this.mouseCaptureTimer = setTimeout(() => {
+      this.mouseCaptureReady = true
+    }, 150)
+  }
+
+  cancelMouseCapture(): void {
+    this.capturingMouse = false
+    this.mouseCaptureReady = false
+    this.mouseCaptureCallback = null
+    if (this.mouseCaptureTimer !== null) {
+      clearTimeout(this.mouseCaptureTimer)
+      this.mouseCaptureTimer = null
     }
   }
 

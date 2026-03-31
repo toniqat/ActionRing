@@ -37,7 +37,7 @@ export function RingOverlay({
 
   if (phase === 'gone') return null
 
-  const hasFolders = slots.some((s) => s.action.type === 'folder')
+  const hasFolders = slots.some((s) => s.actions[0]?.type === 'folder')
   const subMultiplier = hasFolders ? (appearance.folderSubRadiusMultiplier ?? 2.0) : 1.0
   const size = Math.round(appearance.ringRadius * subMultiplier + 60) * 2
   const animClass =

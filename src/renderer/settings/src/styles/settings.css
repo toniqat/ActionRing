@@ -102,9 +102,63 @@ body {
   border-radius: 3px;
 }
 
+/* Icon grid: overflow-y:scroll keeps scrollbar slot permanently reserved — grid never shifts */
+.icon-grid-scroll {
+  overflow-y: scroll;
+  scrollbar-width: none;    /* Firefox — hidden by default */
+}
+.icon-grid-scroll:hover {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(128,128,128,0.3) transparent;
+}
+.icon-grid-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.icon-grid-scroll::-webkit-scrollbar-thumb {
+  background: transparent; /* hidden by default */
+  border-radius: 3px;
+}
+.icon-grid-scroll:hover::-webkit-scrollbar-thumb {
+  background: rgba(128,128,128,0.3);
+}
+.icon-grid-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Custom icon remove button — visible only when its parent is hovered */
+div:has(> .icon-remove-btn):hover .icon-remove-btn {
+  display: flex !important;
+}
+
 input[type="range"] {
   height: 4px;
   cursor: pointer;
+}
+
+/* Panel resize handle */
+.panel-resize-handle {
+  width: 5px;
+  position: relative;
+  cursor: col-resize;
+  flex-shrink: 0;
+  outline: none;
+}
+.panel-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1px;
+  background: var(--c-border);
+  transition: background 0.15s, width 0.15s;
+  pointer-events: none;
+}
+.panel-resize-handle[data-separator='hover']::after,
+.panel-resize-handle[data-separator='drag']::after {
+  background: var(--c-accent);
+  width: 2px;
 }
 
 select option {

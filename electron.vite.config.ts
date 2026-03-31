@@ -22,7 +22,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           ring: resolve('src/preload/ring.ts'),
-          settings: resolve('src/preload/settings.ts')
+          settings: resolve('src/preload/settings.ts'),
+          appearance: resolve('src/preload/appearance.ts')
         }
       }
     }
@@ -40,7 +41,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           ring: resolve('src/renderer/ring/index.html'),
-          settings: resolve('src/renderer/settings/index.html')
+          settings: resolve('src/renderer/settings/index.html'),
+          appearance: resolve('src/renderer/appearance/index.html')
         }
       }
     }

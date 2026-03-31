@@ -36,7 +36,7 @@ export function SlotsTab({ config, onSave }: Props): JSX.Element {
       label: 'New Action',
       icon: 'star',
       iconIsCustom: false,
-      action: { type: 'shell', command: '' },
+      actions: [{ type: 'shell', command: '' }],
       enabled: true
     }
     onSave({ ...config, slots: [...slots, newSlot] })
@@ -105,7 +105,7 @@ export function SlotsTab({ config, onSave }: Props): JSX.Element {
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 500 }}>{slot.label}</div>
               <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
-                {slot.action.type === 'system' ? `System: ${slot.action.action}` : slot.action.type}
+                {slot.actions[0]?.type === 'system' ? `System: ${(slot.actions[0] as import('@shared/config.types').SystemAction).action}` : (slot.actions[0]?.type ?? 'none')}
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -202,11 +202,11 @@ function SlotEditor({ slot, onChange }: { slot: SlotConfig; onChange: (s: SlotCo
         </div>
       </div>
 
-      {/* Action type */}
+      {/* Action type (first action in sequence) */}
       <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Action Type</span>
         <select
-          value={slot.action.type}
+          value={slot.actions[0]?.type ?? 'shell'}
           onChange={(e) => {
             const type = e.target.value as typeof actionTypes[number]
             let action: ActionConfig
@@ -214,7 +214,7 @@ function SlotEditor({ slot, onChange }: { slot: SlotConfig; onChange: (s: SlotCo
             else if (type === 'shortcut') action = { type: 'shortcut', keys: '' }
             else if (type === 'shell') action = { type: 'shell', command: '' }
             else action = { type: 'system', action: 'volume-up' }
-            onChange({ ...slot, action })
+            onChange({ ...slot, actions: [action] })
           }}
           style={{
             background: '#2a2a3e', border: '1px solid rgba(255,255,255,0.1)',
@@ -226,13 +226,13 @@ function SlotEditor({ slot, onChange }: { slot: SlotConfig; onChange: (s: SlotCo
       </label>
 
       {/* Action target (context-sensitive) */}
-      {slot.action.type === 'launch' && (
+      {slot.actions[0]?.type === 'launch' && (
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Application Path</span>
           <div style={{ display: 'flex', gap: 8 }}>
             <input
-              value={slot.action.target}
-              onChange={(e) => onChange({ ...slot, action: { type: 'launch', target: e.target.value } })}
+              value={(slot.actions[0] as import('@shared/config.types').LaunchAction).target}
+              onChange={(e) => onChange({ ...slot, actions: [{ type: 'launch', target: e.target.value }] })}
               placeholder="e.g. chrome.exe"
               style={{
                 flex: 1, background: '#2a2a3e', border: '1px solid rgba(255,255,255,0.1)',
@@ -242,7 +242,7 @@ function SlotEditor({ slot, onChange }: { slot: SlotConfig; onChange: (s: SlotCo
             <button
               onClick={async () => {
                 const path = await window.settingsAPI.pickExe()
-                if (path) onChange({ ...slot, action: { type: 'launch', target: path } })
+                if (path) onChange({ ...slot, actions: [{ type: 'launch', target: path }] })
               }}
               style={{
                 background: '#2a2a3e', border: '1px solid rgba(255,255,255,0.1)',
@@ -253,12 +253,12 @@ function SlotEditor({ slot, onChange }: { slot: SlotConfig; onChange: (s: SlotCo
         </label>
       )}
 
-      {slot.action.type === 'shortcut' && (
+      {slot.actions[0]?.type === 'shortcut' && (
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Key Combo</span>
           <input
-            value={slot.action.keys}
-            onChange={(e) => onChange({ ...slot, action: { type: 'shortcut', keys: e.target.value } })}
+            value={(slot.actions[0] as import('@shared/config.types').ShortcutAction).keys}
+            onChange={(e) => onChange({ ...slot, actions: [{ type: 'shortcut', keys: e.target.value }] })}
             placeholder="e.g. ctrl+c"
             style={{
               background: '#2a2a3e', border: '1px solid rgba(255,255,255,0.1)',
@@ -268,12 +268,12 @@ function SlotEditor({ slot, onChange }: { slot: SlotConfig; onChange: (s: SlotCo
         </label>
       )}
 
-      {slot.action.type === 'shell' && (
+      {slot.actions[0]?.type === 'shell' && (
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Command</span>
           <input
-            value={slot.action.command}
-            onChange={(e) => onChange({ ...slot, action: { type: 'shell', command: e.target.value } })}
+            value={(slot.actions[0] as import('@shared/config.types').ShellAction).command}
+            onChange={(e) => onChange({ ...slot, actions: [{ type: 'shell', command: e.target.value }] })}
             placeholder="e.g. notepad.exe"
             style={{
               background: '#2a2a3e', border: '1px solid rgba(255,255,255,0.1)',
@@ -283,13 +283,13 @@ function SlotEditor({ slot, onChange }: { slot: SlotConfig; onChange: (s: SlotCo
         </label>
       )}
 
-      {slot.action.type === 'system' && (
+      {slot.actions[0]?.type === 'system' && (
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 0.5 }}>System Action</span>
           <select
-            value={slot.action.action}
+            value={(slot.actions[0] as import('@shared/config.types').SystemAction).action}
             onChange={(e) =>
-              onChange({ ...slot, action: { type: 'system', action: e.target.value as typeof systemActions[number] } })
+              onChange({ ...slot, actions: [{ type: 'system', action: e.target.value as typeof systemActions[number] }] })
             }
             style={{
               background: '#2a2a3e', border: '1px solid rgba(255,255,255,0.1)',

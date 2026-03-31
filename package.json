@@ -19,7 +19,9 @@
     "@dnd-kit/utilities": "^3.2.2",
     "framer-motion": "^12.38.0",
     "react": "^18.3.1",
+    "react-colorful": "^5.6.1",
     "react-dom": "^18.3.1",
+    "react-resizable-panels": "^4.7.6",
     "uiohook-napi": "^1.5.3"
   },
   "devDependencies": {
@@ -41,7 +43,8 @@
   },
   "build": {
     "appId": "com.actionring",
-    "productName": "ActionRing",
+    "productName": "Action Ring",
+    "executableName": "ActionRing",
     "files": [
       "out/**/*",
       "resources/**/*"
@@ -50,7 +53,7 @@
       "**/node_modules/uiohook-napi/**"
     ],
     "win": {
-      "icon": "resources/icons/app-icon.ico",
+      "icon": "resources/icons/icon.ico",
       "target": [
         {
           "target": "portable",
@@ -61,7 +64,7 @@
       ]
     },
     "mac": {
-      "icon": "resources/icons/app-icon.icns",
+      "icon": "resources/icons/icon.svg",
       "target": [
         {
           "target": "dmg",
