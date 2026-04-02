@@ -17,9 +17,7 @@ import {
 
 const GITHUB_OWNER = 'toniqat'
 const GITHUB_REPO  = 'ActionRing'
-// PAT is used solely to raise the GitHub API rate limit for release checks.
-// It lives only in the main process and is never forwarded to any renderer.
-const GITHUB_PAT = ''
+const GITHUB_PAT = process.env.GITHUB_PAT ?? ''
 const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
 
 interface CachedRelease {
@@ -92,7 +90,7 @@ function downloadFile(
         port: parsed.port || (isHttps ? 443 : 80),
         path: parsed.pathname + parsed.search,
         // GitHub asset redirects go to S3 — no auth header needed there
-        headers: location.includes('api.github.com')
+        headers: location.includes('api.github.com') && GITHUB_PAT
           ? { 'User-Agent': 'ActionRing-App', 'Authorization': `Bearer ${GITHUB_PAT}` }
           : { 'User-Agent': 'ActionRing-App' },
       }
@@ -128,9 +126,9 @@ async function fetchLatestRelease(): Promise<CachedRelease> {
   const apiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`
   const headers: Record<string, string> = {
     'User-Agent': 'ActionRing-App',
-    'Authorization': `Bearer ${GITHUB_PAT}`,
     'Accept': 'application/vnd.github+json',
   }
+  if (GITHUB_PAT) headers['Authorization'] = `Bearer ${GITHUB_PAT}`
 
   const body = await httpsGet(apiUrl, headers)
   const release = JSON.parse(body) as {
