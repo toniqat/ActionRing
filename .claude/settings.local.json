@@ -34,7 +34,8 @@
       "Bash(cat F:/Project/ActionRing/tsconfig*.json)",
       "Bash(find:*)",
       "Bash(npx electron-vite:*)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(gh api:*)"
     ]
   }
 }
