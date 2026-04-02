@@ -1,4 +1,4 @@
-import { Tray, Menu, app, nativeImage } from 'electron'
+import { Tray, Menu, app, nativeImage, Notification } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import type { ConfigStore } from './ConfigStore'
@@ -68,6 +68,22 @@ export class TrayManager {
     ])
 
     this.tray.setContextMenu(contextMenu)
+  }
+
+  showNotification(title: string, body: string): void {
+    if (!this.tray) return
+    if (process.platform === 'win32') {
+      // Use the modern WinRT Toast API instead of the legacy balloon.
+      // Do NOT pass `icon` — on Windows that triggers the thumbnail/image layout
+      // rather than the header icon slot. The header icon is supplied automatically
+      // by Windows from the AppUserModelId → exe registration (icon.ico).
+      new Notification({ title, body }).show()
+    } else {
+      const iconPath = is.dev
+        ? join(process.cwd(), 'resources/icons', 'icon.svg')
+        : join(process.resourcesPath, 'icons', 'icon.svg')
+      new Notification({ title, body, icon: iconPath }).show()
+    }
   }
 
   destroy(): void {

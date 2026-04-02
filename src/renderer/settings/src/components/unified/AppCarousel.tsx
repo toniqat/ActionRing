@@ -1,10 +1,12 @@
 import {
   useState, useRef, useEffect, useCallback, useLayoutEffect,
 } from 'react'
+import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useSettings } from '../../context/SettingsContext'
 import { useT } from '../../i18n/I18nContext'
 import { AddAppOverlay } from './AddAppOverlay'
+import { UIIcon } from '@shared/UIIcon'
 import type { AppEntry, AppProfile } from '@shared/config.types'
 
 // ── Constants (≈50% smaller than original) ───────────────────────────────────
@@ -127,15 +129,15 @@ function ProfileContextMenu({
   const t = useT()
   const items: Array<{
     label: string
-    icon: string
+    icon: React.ReactNode
     action: () => void
     danger?: boolean
     disabled?: boolean
   }> = [
-    { label: t('carousel.rename'),    icon: '✏', action: onRename },
-    { label: t('carousel.duplicate'), icon: '⧉', action: onDuplicate },
-    { label: t('carousel.export'),    icon: '↑', action: onExport },
-    { label: t('carousel.delete'),    icon: '✕', action: onDelete, danger: true, disabled: !canDelete },
+    { label: t('carousel.rename'),    icon: <UIIcon name="edit" size={13} />,      action: onRename },
+    { label: t('carousel.duplicate'), icon: <UIIcon name="duplicate" size={13} />, action: onDuplicate },
+    { label: t('carousel.export'),    icon: <UIIcon name="upload" size={13} />,    action: onExport },
+    { label: t('carousel.delete'),    icon: <UIIcon name="close" size={13} />,     action: onDelete, danger: true, disabled: !canDelete },
   ]
 
   return (
@@ -184,7 +186,7 @@ function ProfileContextMenu({
           }}
           onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
         >
-          <span style={{ fontSize: 11, width: 14, textAlign: 'center', color: item.danger ? '#e05555' : 'var(--c-text-dim)', flexShrink: 0 }}>
+          <span style={{ width: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', color: item.danger ? '#e05555' : 'var(--c-text-dim)', flexShrink: 0 }}>
             {item.icon}
           </span>
           <span style={{ fontSize: 12, color: item.danger ? '#e05555' : 'var(--c-text)' }}>
@@ -457,8 +459,8 @@ function ProfileDropdown({
                       (e.currentTarget.parentElement as HTMLElement).style.background = isActive ? 'var(--c-accent-bg)' : 'none'
                     }}
                   >
-                    <span style={{ fontSize: 10, color: isActive ? 'var(--c-accent)' : 'var(--c-text-dim)', fontWeight: isActive ? 700 : 400 }}>
-                      {idx === 0 ? '★' : '○'}
+                    <span style={{ color: isActive ? 'var(--c-accent)' : 'var(--c-text-dim)', fontWeight: isActive ? 700 : 400 }}>
+                      <UIIcon name={idx === 0 ? 'favorite' : 'radio_button'} size={10} />
                     </span>
                     <span style={{ flex: 1, fontSize: 12, color: isActive ? 'var(--c-accent)' : 'var(--c-text)', fontWeight: isActive ? 600 : 400 }}>
                       {profile.name}
@@ -598,7 +600,7 @@ function ProfileDropdown({
               onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--c-surface)' }}
               onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
             >
-              <span style={{ fontSize: 11, width: 14, textAlign: 'center', color: 'var(--c-text-dim)', flexShrink: 0 }}>↑</span>
+              <span style={{ width: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--c-text-dim)', flexShrink: 0 }}><UIIcon name="upload" size={13} /></span>
               <span style={{ fontSize: 12, color: 'var(--c-text)' }}>{t('carousel.exportAll')}</span>
             </button>
             <button
@@ -613,7 +615,7 @@ function ProfileDropdown({
               onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--c-surface)' }}
               onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
             >
-              <span style={{ fontSize: 11, width: 14, textAlign: 'center', color: 'var(--c-text-dim)', flexShrink: 0 }}>↓</span>
+              <span style={{ width: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--c-text-dim)', flexShrink: 0 }}><UIIcon name="download" size={13} /></span>
               <span style={{ fontSize: 12, color: 'var(--c-text)' }}>{t('carousel.importProfiles')}</span>
             </button>
             {app.id !== 'default' && (
@@ -631,7 +633,7 @@ function ProfileDropdown({
                   onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(220,60,60,0.1)' }}
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
                 >
-                  <span style={{ fontSize: 11, width: 14, textAlign: 'center', color: '#e05555', flexShrink: 0 }}>✕</span>
+                  <span style={{ width: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#e05555', flexShrink: 0 }}><UIIcon name="close" size={13} /></span>
                   <span style={{ fontSize: 12, color: '#e05555' }}>{t('carousel.deleteApp')}</span>
                 </button>
               </>
@@ -710,21 +712,24 @@ function CarouselItem({
         <AppIcon app={app} isActive={isActive} isHovered={isHovered || showDropdown} size={ICON_SIZE} />
       </button>
 
-      <AnimatePresence>
-        {showDropdown && (
-          <ProfileDropdown
-            app={app}
-            anchorRef={itemRef as React.RefObject<HTMLElement>}
-            onSelectProfile={(profileId) => {
-              onSelectProfile(profileId)
-              closeDropdown()
-            }}
-            onClose={closeDropdown}
-            onChangeTarget={() => { onReassignTarget(app.id); closeDropdown() }}
-            onDeleteApp={() => { onDeleteApp(app.id); closeDropdown() }}
-          />
-        )}
-      </AnimatePresence>
+      {createPortal(
+        <AnimatePresence>
+          {showDropdown && (
+            <ProfileDropdown
+              app={app}
+              anchorRef={itemRef as React.RefObject<HTMLElement>}
+              onSelectProfile={(profileId) => {
+                onSelectProfile(profileId)
+                closeDropdown()
+              }}
+              onClose={closeDropdown}
+              onChangeTarget={() => { onReassignTarget(app.id); closeDropdown() }}
+              onDeleteApp={() => { onDeleteApp(app.id); closeDropdown() }}
+            />
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
     </div>
   )
 }
@@ -790,15 +795,16 @@ export function AppCarousel(): JSX.Element {
     const activeIndex = apps.findIndex((a) => a.id === activeEditingAppId)
     if (activeIndex < 0) return
 
-    if (activeIndex === 0) {
-      setTrackOffset(0)
+    const usableWidth = containerWidth - NAV_BTN_W * 2
+    const totalTrackWidth = apps.length * ITEM_STEP + ITEM_WIDTH  // +ITEM_WIDTH for add button
+
+    if (totalTrackWidth <= usableWidth) {
+      // Center items when they all fit
+      setTrackOffset((usableWidth - totalTrackWidth) / 2)
       return
     }
 
-    const usableWidth = containerWidth - NAV_BTN_W * 2
-    const totalTrackWidth = apps.length * ITEM_STEP + ITEM_WIDTH  // +ITEM_WIDTH for add button
     const idealOffset = -(activeIndex * ITEM_STEP) + usableWidth / 2 - ITEM_WIDTH / 2
-    // Fix: clamp minOffset to ≤ 0 so items never shift right when track fits in container
     const maxScrollLeft = Math.max(0, totalTrackWidth - usableWidth)
     const minOffset = -maxScrollLeft
     setTrackOffset(Math.max(minOffset, Math.min(0, idealOffset)))
@@ -867,7 +873,6 @@ export function AppCarousel(): JSX.Element {
         display: 'flex',
         alignItems: 'center',
         padding: '3px 0 2px',
-        borderBottom: '1px solid var(--c-border-sub)',
         background: 'transparent',
         flexShrink: 0,
         position: 'relative',
@@ -900,7 +905,7 @@ export function AppCarousel(): JSX.Element {
         <motion.div
           animate={{ x: trackOffset }}
           transition={{ type: 'spring', stiffness: 340, damping: 30 }}
-          style={{ display: 'flex', gap: ITEM_GAP, paddingLeft: 4 }}
+          style={{ display: 'flex', gap: ITEM_GAP }}
         >
           {apps.map((app) => (
             <CarouselItem

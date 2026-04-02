@@ -4,11 +4,12 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import type {
   AppConfig, SlotConfig, ModifierKey,
   AppearanceConfig, AppEntry, AppProfile,
+  ShortcutEntry, ActionConfig,
   // Legacy (migration only)
   Profile,
 } from '@shared/config.types'
 
-const CONFIG_VERSION = 7
+const CONFIG_VERSION = 11
 
 function generateId(): string {
   return Math.random().toString(36).slice(2, 10)
@@ -16,7 +17,7 @@ function generateId(): string {
 
 const DEFAULT_APPEARANCE: AppearanceConfig = {
   ringRadius: 80,
-  buttonSize: 32,
+  buttonSize: 24,
   iconSize: 18,
   showText: false,
   opacity: 0.92,
@@ -94,6 +95,34 @@ function cloneSlots(slots: SlotConfig[]): SlotConfig[] {
   return JSON.parse(JSON.stringify(slots))
 }
 
+/**
+ * Seeds a ShortcutEntry in the library for each non-folder slot.
+ * Returns updated slots (each with shortcutIds set, actions cleared) and the populated library.
+ * Used when building the default config on first launch.
+ */
+function seedLibraryFromSlots(slots: SlotConfig[]): { slots: SlotConfig[]; library: ShortcutEntry[] } {
+  const library: ShortcutEntry[] = []
+  const now = Date.now()
+  const seededSlots = slots.map((slot) => {
+    if (slot.actions.length === 0 || slot.actions[0].type === 'folder') {
+      return { ...slot, shortcutIds: [] }
+    }
+    const id = generateId()
+    library.push({
+      id,
+      name: slot.label,
+      actions: JSON.parse(JSON.stringify(slot.actions)),
+      isFavorite: false,
+      createdAt: now,
+      icon: slot.icon,
+      iconIsCustom: slot.iconIsCustom,
+      ...(slot.bgColor !== undefined ? { bgColor: slot.bgColor } : {}),
+    })
+    return { ...slot, shortcutIds: [id], actions: [] }
+  })
+  return { slots: seededSlots, library }
+}
+
 function makeDefaultAppEntry(slots: SlotConfig[], appearance: AppearanceConfig): AppEntry {
   const profileId = generateId()
   return {
@@ -112,18 +141,21 @@ function makeDefaultAppEntry(slots: SlotConfig[], appearance: AppearanceConfig):
 }
 
 function buildDefaultConfig(): AppConfig {
-  const defaultEntry = makeDefaultAppEntry(DEFAULT_SLOTS, DEFAULT_APPEARANCE)
+  const { slots: seededSlots, library } = seedLibraryFromSlots(DEFAULT_SLOTS)
+  const defaultEntry = makeDefaultAppEntry(seededSlots, DEFAULT_APPEARANCE)
   const activeProfile = defaultEntry.profiles[0]
   return {
     version: CONFIG_VERSION,
     enabled: true,
-    trigger: { button: 3, modifiers: [] },
+    trigger: { button: 3, modifiers: ['ctrl', 'shift'] },
     slots: activeProfile.slots,
     appearance: activeProfile.appearance,
-    startOnLogin: false,
-    theme: 'dark',
+    startOnLogin: true,
+    trayNotificationsEnabled: true,
+    theme: 'system',
     language: 'en',
     apps: [defaultEntry],
+    shortcutsLibrary: library,
   }
 }
 
@@ -258,6 +290,181 @@ export class ConfigStore {
         delete (config as any).profiles
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         delete (config as any).activeProfileId
+      }
+
+      // ── v7 → v8: extract slot actions into a global shortcuts library ────────
+      if ((parsed.version ?? 1) < 8) {
+        const library: ShortcutEntry[] = config.shortcutsLibrary ? [...config.shortcutsLibrary] : []
+        // fingerprint → id map for deduplication across all apps/profiles
+        const fpMap = new Map<string, string>(library.map((e) => [JSON.stringify(e.actions), e.id]))
+
+        const migrateSlot = (slot: SlotConfig): SlotConfig => {
+          const migratedSubSlots = slot.subSlots ? slot.subSlots.map(migrateSlot) : undefined
+          if (slot.shortcutId || slot.actions.length === 0 || slot.actions[0].type === 'folder') {
+            return { ...slot, subSlots: migratedSubSlots }
+          }
+          const fp = JSON.stringify(slot.actions)
+          let shortcutId = fpMap.get(fp)
+          if (!shortcutId) {
+            shortcutId = generateId()
+            fpMap.set(fp, shortcutId)
+            library.push({
+              id: shortcutId,
+              name: slot.label,
+              actions: JSON.parse(JSON.stringify(slot.actions)),
+              isFavorite: false,
+              createdAt: Date.now(),
+              icon: slot.icon,
+              iconIsCustom: slot.iconIsCustom,
+            })
+          }
+          return { ...slot, shortcutId, subSlots: migratedSubSlots }
+        }
+
+        const migratedApps = config.apps.map((app) => ({
+          ...app,
+          profiles: app.profiles.map((profile) => ({
+            ...profile,
+            slots: profile.slots.map(migrateSlot),
+          })),
+        }))
+
+        config = { ...config, version: 8, apps: migratedApps, shortcutsLibrary: library }
+      }
+
+      // ── v8 → v9: convert shortcutId to shortcutIds array, clear slot actions ────
+      if ((parsed.version ?? 1) < 9) {
+        const library: ShortcutEntry[] = config.shortcutsLibrary ? [...config.shortcutsLibrary] : []
+        const fpMap = new Map<string, string>(library.map((e) => [JSON.stringify(e.actions), e.id]))
+
+        const migrateSlot = (slot: SlotConfig): SlotConfig => {
+          const migratedSubSlots = slot.subSlots ? slot.subSlots.map(migrateSlot) : undefined
+          // Folder slots: keep actions, just ensure shortcutIds is set
+          if (slot.actions[0]?.type === 'folder') {
+            return { ...slot, shortcutIds: [], subSlots: migratedSubSlots }
+          }
+          // Already has shortcutIds: just clear raw actions
+          if (slot.shortcutIds && slot.shortcutIds.length > 0) {
+            return { ...slot, actions: [], subSlots: migratedSubSlots }
+          }
+          // Has shortcutId (from v8): convert to shortcutIds array
+          if (slot.shortcutId) {
+            return { ...slot, shortcutIds: [slot.shortcutId], shortcutId: undefined, actions: [], subSlots: migratedSubSlots }
+          }
+          // Has raw actions but no shortcutId: create a library entry
+          if (slot.actions.length > 0) {
+            const fp = JSON.stringify(slot.actions)
+            let id = fpMap.get(fp)
+            if (!id) {
+              id = generateId()
+              fpMap.set(fp, id)
+              library.push({ id, name: slot.label, actions: JSON.parse(JSON.stringify(slot.actions)), isFavorite: false, createdAt: Date.now(), icon: slot.icon, iconIsCustom: slot.iconIsCustom })
+            }
+            return { ...slot, shortcutIds: [id], shortcutId: undefined, actions: [], subSlots: migratedSubSlots }
+          }
+          // Empty slot
+          return { ...slot, shortcutIds: [], shortcutId: undefined, actions: [], subSlots: migratedSubSlots }
+        }
+
+        const migratedApps = config.apps.map((app) => ({
+          ...app,
+          profiles: app.profiles.map((profile) => ({
+            ...profile,
+            slots: profile.slots.map(migrateSlot),
+          })),
+        }))
+
+        config = { ...config, version: 9, apps: migratedApps, shortcutsLibrary: library }
+      }
+
+      // ── v9 → v10: remove global scope, rename call-shortcut → run-shortcut ────
+      if ((parsed.version ?? 1) < 10) {
+        const migrateActionV10 = (action: any): any => {
+          if (action.type === 'set-var' && action.scope === 'global') {
+            action = { ...action, scope: 'local' }
+          }
+          if (action.type === 'calculate' && action.scope === 'global') {
+            action = { ...action, scope: 'local' }
+          }
+          if (action.type === 'stop' && action.scope === 'global') {
+            const { scope: _, ...rest } = action
+            action = rest
+          }
+          if (action.type === 'call-shortcut') {
+            action = { type: 'run-shortcut', shortcutId: action.shortcutId }
+          }
+          if (action.type === 'if-else') {
+            action = { ...action, thenActions: action.thenActions.map(migrateActionV10), elseActions: action.elseActions.map(migrateActionV10) }
+          }
+          if (action.type === 'loop') {
+            action = { ...action, body: action.body.map(migrateActionV10) }
+          }
+          return action
+        }
+
+        // Migrate shortcuts library
+        const library = (config.shortcutsLibrary ?? []).map((entry: any) => ({
+          ...entry,
+          actions: entry.actions.map(migrateActionV10),
+        }))
+
+        // Migrate all slot actions across all app profiles
+        const migrateSlot = (slot: any): any => ({
+          ...slot,
+          actions: (slot.actions ?? []).map(migrateActionV10),
+          subSlots: slot.subSlots ? slot.subSlots.map(migrateSlot) : undefined,
+        })
+
+        const migratedApps = config.apps.map((appEntry: any) => ({
+          ...appEntry,
+          profiles: appEntry.profiles.map((profile: any) => ({
+            ...profile,
+            slots: profile.slots.map(migrateSlot),
+          })),
+        }))
+
+        // Remove globalVars
+        const { globalVars: _, ...configWithoutGlobalVars } = config as any
+        config = { ...configWithoutGlobalVars, version: 10, apps: migratedApps, shortcutsLibrary: library }
+      }
+
+      // ── v10 → v11: additive only — new sequence action type, extended wait modes ──
+      if ((parsed.version ?? 1) < 11) {
+        config = { ...config, version: 11 }
+      }
+
+      // ── Backfill missing icons on library entries ──────────────────────────
+      // Earlier migrations (v7→v8, v8→v9) may not have copied icon from slot.
+      // Walk all slots and propagate icon to their referenced library entries.
+      {
+        const library = config.shortcutsLibrary ?? []
+        const needsFill = library.some((e) => !e.icon)
+        if (needsFill) {
+          const iconMap = new Map<string, { icon: string; iconIsCustom: boolean }>()
+          for (const appEntry of config.apps) {
+            for (const profile of appEntry.profiles) {
+              const walkSlots = (slots: SlotConfig[]): void => {
+                for (const slot of slots) {
+                  if (slot.icon) {
+                    for (const sid of slot.shortcutIds ?? []) {
+                      if (!iconMap.has(sid)) iconMap.set(sid, { icon: slot.icon, iconIsCustom: slot.iconIsCustom })
+                    }
+                  }
+                  if (slot.subSlots) walkSlots(slot.subSlots)
+                }
+              }
+              walkSlots(profile.slots)
+            }
+          }
+          config = {
+            ...config,
+            shortcutsLibrary: library.map((entry) => {
+              if (entry.icon) return entry
+              const found = iconMap.get(entry.id)
+              return found ? { ...entry, icon: found.icon, iconIsCustom: found.iconIsCustom } : entry
+            }),
+          }
+        }
       }
 
       // Ensure top-level slots/appearance always match the Default System's active profile
@@ -503,6 +710,64 @@ export class ConfigStore {
     this.config = updated
     this.persist(updated)
     return updated
+  }
+
+  // ── Shortcuts library ─────────────────────────────────────────────────────
+
+  /**
+   * Update a library entry's actions (and optionally name).
+   * Slots reference entries by ID so no propagation is needed.
+   */
+  updateLibraryEntry(
+    id: string,
+    actions: ActionConfig[],
+    name?: string,
+    icon?: string,
+    iconIsCustom?: boolean,
+    bgColor?: string,
+  ): void {
+    const library = this.config.shortcutsLibrary ?? []
+    const idx = library.findIndex((e) => e.id === id)
+    if (idx < 0) return
+
+    const updated: ShortcutEntry = {
+      ...library[idx],
+      actions,
+      lastUsed: Date.now(),
+      ...(name !== undefined ? { name } : {}),
+      ...(icon !== undefined ? { icon, iconIsCustom: iconIsCustom ?? false } : {}),
+      ...(bgColor !== undefined ? { bgColor } : bgColor === null ? { bgColor: undefined } : {}),
+    }
+    const newLibrary = [...library]
+    newLibrary[idx] = updated
+
+    this.config = this.syncTopLevel({ ...this.config, shortcutsLibrary: newLibrary })
+    this.persist(this.config)
+  }
+
+  /**
+   * Remove a library entry and orphan all slots that referenced it
+   * (deleted entry ID is removed from shortcutIds arrays in all slots).
+   */
+  deleteLibraryEntry(id: string): void {
+    const newLibrary = (this.config.shortcutsLibrary ?? []).filter((e) => e.id !== id)
+    const newApps = this.config.apps.map((app) => ({
+      ...app,
+      profiles: app.profiles.map((profile) => ({
+        ...profile,
+        slots: this.orphanLibrarySlots(profile.slots, id),
+      })),
+    }))
+    this.config = this.syncTopLevel({ ...this.config, shortcutsLibrary: newLibrary, apps: newApps })
+    this.persist(this.config)
+  }
+
+  private orphanLibrarySlots(slots: SlotConfig[], entryId: string): SlotConfig[] {
+    return slots.map((slot) => ({
+      ...slot,
+      shortcutIds: (slot.shortcutIds ?? []).filter((id) => id !== entryId),
+      subSlots: slot.subSlots ? this.orphanLibrarySlots(slot.subSlots, entryId) : undefined,
+    }))
   }
 
   // ── Legacy compatibility — still used by HookManager ──────────────────────

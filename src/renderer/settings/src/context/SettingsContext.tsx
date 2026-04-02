@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react'
 import type { AppConfig, SlotConfig, AppearanceConfig } from '@shared/config.types'
-import type { AppearanceSlotData } from '@shared/ipc.types'
+import type { AppearanceSlotData, ShortcutsSlotData } from '@shared/ipc.types'
 
 interface SettingsContextValue {
   draft: AppConfig
@@ -195,6 +195,51 @@ export function SettingsProvider({
   // Apply slot updates coming from the appearance editor window (live preview only)
   useEffect(() => {
     window.settingsAPI.onAppearanceUpdated((data: AppearanceSlotData) => {
+      setDraft((prev) => {
+        const newSlots = [...prev.slots]
+        if (data.isSubSlot && data.folderIndex !== null && data.subSlotIndex !== null) {
+          const folder = { ...newSlots[data.folderIndex] }
+          const newSubSlots = [...(folder.subSlots ?? [])]
+          newSubSlots[data.subSlotIndex] = data.slot
+          folder.subSlots = newSubSlots
+          newSlots[data.folderIndex] = folder
+        } else {
+          newSlots[data.slotIndex] = data.slot
+        }
+        const updated = { ...prev, slots: newSlots }
+        setPreviewDraft(updated)
+        return updated
+      })
+    })
+  }, [])
+
+  // Apply slot/library updates coming from the shortcuts editor window (live preview only)
+  useEffect(() => {
+    window.settingsAPI.onShortcutsUpdated((data: ShortcutsSlotData) => {
+      if (data.libraryEntryId) {
+        // Library-entry edit session: update only the library entry (slots reference by ID)
+        setDraft((prev) => {
+          const library = prev.shortcutsLibrary ?? []
+          const entryIdx = library.findIndex((e) => e.id === data.libraryEntryId)
+          if (entryIdx < 0) return prev
+          const updatedEntry = {
+            ...library[entryIdx],
+            actions: data.slot.actions,
+            name: data.slot.label,
+            icon: data.slot.icon,
+            iconIsCustom: data.slot.iconIsCustom,
+            bgColor: data.slot.bgColor,
+          }
+          const newLibrary = [...library]
+          newLibrary[entryIdx] = updatedEntry
+          const updated = { ...prev, shortcutsLibrary: newLibrary }
+          setPreviewDraft(updated)
+          return updated
+        })
+        return
+      }
+
+      // Regular slot edit session
       setDraft((prev) => {
         const newSlots = [...prev.slots]
         if (data.isSubSlot && data.folderIndex !== null && data.subSlotIndex !== null) {

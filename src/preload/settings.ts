@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { AppConfig, AppEntry, AppProfile, SlotConfig } from '@shared/config.types'
-import type { ConfigSavePayload, AppearanceSlotData } from '@shared/ipc.types'
+import type { ConfigSavePayload, AppearanceSlotData, ShortcutsSlotData } from '@shared/ipc.types'
 import {
   IPC_CONFIG_GET,
   IPC_CONFIG_SAVE,
@@ -9,6 +9,8 @@ import {
   IPC_FILE_PICK_ICON,
   IPC_APPEARANCE_OPEN,
   IPC_APPEARANCE_UPDATED,
+  IPC_SHORTCUTS_OPEN,
+  IPC_SHORTCUTS_UPDATED,
   IPC_WINDOW_MINIMIZE,
   IPC_WINDOW_MAXIMIZE,
   IPC_APP_ADD,
@@ -33,6 +35,16 @@ import {
   IPC_CONFIG_RESET,
   IPC_CONFIG_EXPORT_GLOBAL,
   IPC_CONFIG_IMPORT_GLOBAL,
+  IPC_UPDATE_CHECK,
+  IPC_UPDATE_DOWNLOAD,
+  IPC_UPDATE_INSTALL,
+  IPC_UPDATE_STATUS,
+  IPC_SHELL_OPEN_EXTERNAL,
+  IPC_ICONS_READ_SVG,
+  IPC_ICONS_GET_RESOURCE,
+  IPC_ICONS_ADD_RECENT,
+  type UpdateStatus,
+  type ResourceIconEntry,
 } from '@shared/ipc.types'
 
 contextBridge.exposeInMainWorld('settingsAPI', {
@@ -49,6 +61,12 @@ contextBridge.exposeInMainWorld('settingsAPI', {
     ipcRenderer.invoke(IPC_APPEARANCE_OPEN, data),
   onAppearanceUpdated: (callback: (data: AppearanceSlotData) => void) => {
     ipcRenderer.on(IPC_APPEARANCE_UPDATED, (_event, data) => callback(data))
+  },
+
+  openShortcutsEditor: (data: ShortcutsSlotData): Promise<void> =>
+    ipcRenderer.invoke(IPC_SHORTCUTS_OPEN, data),
+  onShortcutsUpdated: (callback: (data: ShortcutsSlotData) => void): void => {
+    ipcRenderer.on(IPC_SHORTCUTS_UPDATED, (_event, data) => callback(data))
   },
 
   minimizeWindow: (): void => ipcRenderer.send(IPC_WINDOW_MINIMIZE),
@@ -117,5 +135,29 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   },
   cancelMouseCapture: (): void => {
     ipcRenderer.send(IPC_TRIGGER_CANCEL_MOUSE_CAPTURE)
+  },
+
+  // ── Update check & install ────────────────────────────────────────────────
+  checkForUpdates: (): Promise<UpdateStatus> => ipcRenderer.invoke(IPC_UPDATE_CHECK),
+  downloadUpdate: (): void => ipcRenderer.send(IPC_UPDATE_DOWNLOAD),
+  installUpdate: (): void => ipcRenderer.send(IPC_UPDATE_INSTALL),
+  onUpdateStatus: (cb: (status: UpdateStatus) => void): void => {
+    ipcRenderer.on(IPC_UPDATE_STATUS, (_event, status: UpdateStatus) => cb(status))
+  },
+
+  // ── Shell utilities ───────────────────────────────────────────────────────
+  openExternalUrl: (url: string): Promise<void> => ipcRenderer.invoke(IPC_SHELL_OPEN_EXTERNAL, url),
+
+  /** Read raw SVG text for an absolute .svg file path. Returns empty string on error. */
+  readSvgContent: (absPath: string): Promise<string> =>
+    ipcRenderer.invoke(IPC_ICONS_READ_SVG, absPath),
+
+  /** Fetch bundled resource SVG icons (resources/icons/). */
+  getResourceIcons: (): Promise<ResourceIconEntry[]> =>
+    ipcRenderer.invoke(IPC_ICONS_GET_RESOURCE),
+
+  /** Record a recently used icon ref (builtin name or abs path). */
+  addRecentIcon: (iconRef: string): void => {
+    ipcRenderer.send(IPC_ICONS_ADD_RECENT, iconRef)
   },
 })

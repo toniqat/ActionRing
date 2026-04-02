@@ -19,6 +19,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { ActionConfig, SystemActionId } from '@shared/config.types'
+import { UIIcon } from '@shared/UIIcon'
 
 // ─── Node visual config ────────────────────────────────────────────────────────
 
@@ -26,10 +27,10 @@ type NodeStyle = Record<string, { label: string; icon: string; color: string; de
 
 function getNodeStyle(t: (key: keyof Translations) => string): NodeStyle {
   return {
-    launch:   { label: t('action.launch'),   icon: '🚀', color: '#3b82f6', desc: t('action.launchDesc') },
-    shortcut: { label: t('action.shortcut'), icon: '⌨️', color: '#8b5cf6', desc: t('action.shortcutDesc') },
-    shell:    { label: t('action.shell'),    icon: '💻', color: '#10b981', desc: t('action.shellDesc') },
-    system:   { label: t('action.system'),   icon: '⚙️', color: '#f59e0b', desc: t('action.systemDesc') },
+    launch:   { label: t('action.launch'),   icon: 'launch',   color: '#3b82f6', desc: t('action.launchDesc') },
+    shortcut: { label: t('action.shortcut'), icon: 'shortcut', color: '#8b5cf6', desc: t('action.shortcutDesc') },
+    shell:    { label: t('action.shell'),    icon: 'shell',    color: '#10b981', desc: t('action.shellDesc') },
+    system:   { label: t('action.system'),   icon: 'system',   color: '#f59e0b', desc: t('action.systemDesc') },
   }
 }
 
@@ -90,7 +91,7 @@ function SortableNode({ node, onChange, onDelete }: SortableNodeProps): JSX.Elem
   }
 
   return (
-    <div ref={setNodeRef} style={style}>
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
       <div
         style={{
           display: 'flex',
@@ -103,14 +104,13 @@ function SortableNode({ node, onChange, onDelete }: SortableNodeProps): JSX.Elem
           borderLeft: `3px solid ${cfg.color}`,
           marginBottom: 8,
           position: 'relative',
+          cursor: isDragging ? 'grabbing' : 'grab',
+          touchAction: 'none',
         }}
       >
-        {/* Drag handle */}
+        {/* Drag handle (visual indicator) */}
         <div
-          {...attributes}
-          {...listeners}
           style={{
-            cursor: 'grab',
             color: 'var(--c-text-dim)',
             fontSize: 14,
             lineHeight: 1,
@@ -122,10 +122,14 @@ function SortableNode({ node, onChange, onDelete }: SortableNodeProps): JSX.Elem
         >⣿</div>
 
         {/* Icon */}
-        <div style={{ fontSize: 16, lineHeight: 1, paddingTop: 1, flexShrink: 0 }}>{cfg.icon}</div>
+        <div style={{ flexShrink: 0, color: cfg.color }}><UIIcon name={cfg.icon} size={16} /></div>
 
         {/* Content */}
-        <div style={{ flex: 1, minWidth: 0 }}>
+        <div
+          style={{ flex: 1, minWidth: 0 }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
           <div style={{ fontSize: 12, fontWeight: 600, color: cfg.color, marginBottom: 6 }}>
             {cfg.label}
           </div>
@@ -135,6 +139,7 @@ function SortableNode({ node, onChange, onDelete }: SortableNodeProps): JSX.Elem
         {/* Delete */}
         <button
           onClick={onDelete}
+          onPointerDown={(e) => e.stopPropagation()}
           style={{
             background: 'none',
             border: 'none',
@@ -150,7 +155,7 @@ function SortableNode({ node, onChange, onDelete }: SortableNodeProps): JSX.Elem
           onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#ef4444' }}
           onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-text-dim)' }}
           title={t('modal.remove')}
-        >✕</button>
+        ><UIIcon name="close" size={14} /></button>
       </div>
     </div>
   )
@@ -407,7 +412,7 @@ export function ShortcutsModal({ actions, onSave, onClose }: ShortcutsModalProps
     }
   }, [])
 
-  const addNode = (type: keyof typeof NODE_STYLE) => {
+  const addNode = (type: keyof typeof localNodeStyle) => {
     let action: ActionConfig
     if (type === 'launch') action = { type: 'launch', target: '' }
     else if (type === 'shortcut') action = { type: 'shortcut', keys: '' }
@@ -478,10 +483,10 @@ export function ShortcutsModal({ actions, onSave, onClose }: ShortcutsModalProps
             style={{
               background: 'none', border: 'none',
               color: 'var(--c-text-dim)', cursor: 'pointer',
-              fontSize: 16, borderRadius: 4, padding: '2px 6px',
-              fontFamily: 'inherit',
+              borderRadius: 4, padding: '2px 6px',
+              fontFamily: 'inherit', display: 'flex', alignItems: 'center',
             }}
-          >✕</button>
+          ><UIIcon name="close" size={16} /></button>
         </div>
 
         {/* Body: workspace + library */}
@@ -579,7 +584,7 @@ export function ShortcutsModal({ actions, onSave, onClose }: ShortcutsModalProps
               {libraryTypes.map(([type, cfg]: [string, { label: string; icon: string; color: string; desc: string }]) => (
                 <button
                   key={type}
-                  onClick={() => addNode(type as keyof typeof NODE_STYLE)}
+                  onClick={() => addNode(type as keyof typeof localNodeStyle)}
                   style={{
                     width: '100%',
                     display: 'flex',
@@ -608,10 +613,10 @@ export function ShortcutsModal({ actions, onSave, onClose }: ShortcutsModalProps
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'center',
-                      fontSize: 14,
                       flexShrink: 0,
+                      color: cfg.color,
                     }}
-                  >{cfg.icon}</div>
+                  ><UIIcon name={cfg.icon} size={13} /></div>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cfg.label}</div>
                     <div style={{ fontSize: 10, color: 'var(--c-text-dim)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{cfg.desc}</div>

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AppConfig, SlotConfig, ActionConfig } from '@shared/config.types'
 import { BUILTIN_ICONS } from '@shared/icons'
+import { UIIcon } from '@shared/UIIcon'
 
 interface Props {
   config: AppConfig
@@ -112,14 +113,14 @@ export function SlotsTab({ config, onSave }: Props): JSX.Element {
               {i > 0 && (
                 <button
                   onClick={(e) => { e.stopPropagation(); moveSlot(i, i - 1) }}
-                  style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: 16 }}
-                >▲</button>
+                  style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                ><UIIcon name="upload" size={16} /></button>
               )}
               {i < slots.length - 1 && (
                 <button
                   onClick={(e) => { e.stopPropagation(); moveSlot(i, i + 1) }}
-                  style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', fontSize: 16 }}
-                >▼</button>
+                  style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.4)', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                ><UIIcon name="download" size={16} /></button>
               )}
               <button
                 onClick={(e) => { e.stopPropagation(); removeSlot(i) }}
@@ -127,9 +128,10 @@ export function SlotsTab({ config, onSave }: Props): JSX.Element {
                 style={{
                   background: 'none', border: 'none',
                   color: slots.length <= 4 ? 'rgba(255,255,255,0.2)' : '#ff6060',
-                  cursor: slots.length <= 4 ? 'not-allowed' : 'pointer', fontSize: 16
+                  cursor: slots.length <= 4 ? 'not-allowed' : 'pointer',
+                  display: 'flex', alignItems: 'center',
                 }}
-              >×</button>
+              ><UIIcon name="close" size={16} /></button>
             </div>
           </div>
         ))}

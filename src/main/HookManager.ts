@@ -1,6 +1,8 @@
 import { BrowserWindow, ipcMain, screen, nativeTheme } from 'electron'
+import { readFileSync } from 'fs'
 import type { ConfigStore } from './ConfigStore'
 import type { WindowTracker } from './WindowTracker'
+import type { SlotConfig } from '@shared/config.types'
 import {
   IPC_RING_SHOW,
   IPC_RING_HIDE,
@@ -101,12 +103,29 @@ export class HookManager {
               config.theme === 'system'
                 ? nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
                 : (config.theme ?? 'dark')
+            // Resolve SVG content for any custom/resource .svg icons
+            const resolvedSvgIcons: Record<string, string> = {}
+            const collectSvgIcons = (slots: SlotConfig[]): void => {
+              for (const slot of slots) {
+                if (slot.iconIsCustom && typeof slot.icon === 'string' && slot.icon.endsWith('.svg')) {
+                  if (!resolvedSvgIcons[slot.icon]) {
+                    try {
+                      resolvedSvgIcons[slot.icon] = readFileSync(slot.icon, 'utf-8')
+                    } catch { /* icon file unreadable, fall back to img */ }
+                  }
+                }
+                if (slot.subSlots?.length) collectSvgIcons(slot.subSlots)
+              }
+            }
+            collectSvgIcons(enabledSlots)
+
             const payload: RingShowPayload = {
               slots: enabledSlots,
               appearance: config.appearance,
               cursorX: cursor.x,
               cursorY: cursor.y,
-              resolvedTheme
+              resolvedTheme,
+              ...(Object.keys(resolvedSvgIcons).length > 0 && { resolvedSvgIcons }),
             }
             ringWin.setPosition(cursor.x - halfSize, cursor.y - halfSize)
             ringWin.showInactive()

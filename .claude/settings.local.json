@@ -24,7 +24,17 @@
       "Bash(python3 -c \":*)",
       "Bash(python -c \":*)",
       "Bash(CSC_IDENTITY_AUTO_DISCOVERY=false WIN_CSC_LINK=\"\" npm run build:win)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(find F:ProjectActionRingresources -type f -name *.svg)",
+      "Bash(xargs grep:*)",
+      "Bash(find /f/Project/ActionRing -type f \\\\\\(-name *equence* -o -name *ondition* \\\\\\))",
+      "Bash(find /f/Project/ActionRing -type d -name *sequence* -o -type d -name *action*)",
+      "Bash(xargs wc:*)",
+      "Bash(grep:*)",
+      "Bash(cat F:/Project/ActionRing/tsconfig*.json)",
+      "Bash(find:*)",
+      "Bash(npx electron-vite:*)",
+      "Read(//tmp/**)"
     ]
   }
 }

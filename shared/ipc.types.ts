@@ -1,4 +1,4 @@
-import type { SlotConfig, AppConfig, AppearanceConfig, AppEntry, AppProfile, Language } from './config.types'
+import type { SlotConfig, AppConfig, AppearanceConfig, AppEntry, AppProfile, Language, ShortcutEntry, ShortcutGroup } from './config.types'
 
 // ── Custom icon library ────────────────────────────────────────────────────
 export interface CustomIconEntry {
@@ -7,12 +7,22 @@ export interface CustomIconEntry {
   name: string      // display name (original filename without extension)
 }
 
+/** An SVG icon from the bundled resources/icons/ directory. */
+export interface ResourceIconEntry {
+  name: string       // human-readable label (e.g. "play arrow")
+  filename: string   // file name (e.g. "play_arrow.svg")
+  absPath: string    // absolute path resolved at runtime
+  svgContent: string // raw SVG markup for inline rendering
+}
+
 // IPC channels for icon management
 export const IPC_ICONS_GET_CUSTOM    = 'icons:get-custom'
 export const IPC_ICONS_ADD_CUSTOM    = 'icons:add-custom'
 export const IPC_ICONS_REMOVE_CUSTOM = 'icons:remove-custom'
 export const IPC_ICONS_GET_RECENT    = 'icons:get-recent'
 export const IPC_ICONS_ADD_RECENT    = 'icons:add-recent'
+export const IPC_ICONS_GET_RESOURCE  = 'icons:get-resource'
+export const IPC_ICONS_READ_SVG      = 'icons:read-svg'
 
 // Appearance editor window
 export const IPC_APPEARANCE_OPEN = 'appearance:open'
@@ -27,6 +37,32 @@ export const IPC_WINDOW_MAXIMIZE = 'window:maximize'
 
 // Appearance editor panel sizes
 export const IPC_APPEARANCE_PANEL_SIZES = 'appearance:panel-sizes'
+
+// Shortcuts editor window
+export const IPC_SHORTCUTS_OPEN         = 'shortcuts:open'
+export const IPC_SHORTCUTS_GET_DATA     = 'shortcuts:get-data'
+export const IPC_SHORTCUTS_UPDATE       = 'shortcuts:update'
+export const IPC_SHORTCUTS_UPDATED      = 'shortcuts:updated'
+export const IPC_SHORTCUTS_DATA_REFRESH = 'shortcuts:data-refresh'
+export const IPC_SHORTCUTS_CLOSE        = 'shortcuts:close'
+export const IPC_SHORTCUTS_PLAY         = 'shortcuts:play'
+
+// ── Progress overlay ─────────────────────────────────────────────────────────
+export const IPC_PROGRESS_UPDATE = 'progress:update'
+
+/** Describes one active sequence's progress state. */
+export interface SequenceProgress {
+  id: string
+  name: string
+  currentStep: number   // 1-based
+  totalSteps: number
+  startedAt: number     // Date.now()
+}
+
+/** Full progress state sent to the overlay. */
+export interface ProgressState {
+  sequences: SequenceProgress[]
+}
 
 // ── Trigger mouse capture (settings UI) ──────────────────────────────────────
 export const IPC_TRIGGER_START_MOUSE_CAPTURE  = 'trigger:start-mouse-capture'
@@ -71,6 +107,7 @@ export const IPC_APP_UPDATE_TARGET        = 'app:update-target'
 export const IPC_APP_EXPORT_ALL_PROFILES  = 'app:export-all-profiles'
 export const IPC_APP_IMPORT_ALL_PROFILES  = 'app:import-all-profiles'
 
+
 // ── Global config backup/restore + reset ─────────────────────────────────────
 export const IPC_CONFIG_RESET         = 'config:reset'
 export const IPC_CONFIG_EXPORT_GLOBAL = 'config:export-global'
@@ -82,6 +119,8 @@ export interface RingShowPayload {
   cursorX: number
   cursorY: number
   resolvedTheme: 'light' | 'dark'
+  /** absPath → SVG content for any custom/resource .svg icons in the slots */
+  resolvedSvgIcons?: Record<string, string>
 }
 
 export interface RingExecutePayload {
@@ -108,12 +147,55 @@ export interface AppearanceSlotData {
   language?: Language
 }
 
+export interface ShortcutsSlotData {
+  slot: SlotConfig
+  slotIndex: number
+  isSubSlot: boolean
+  folderIndex: number | null
+  subSlotIndex: number | null
+  theme: 'light' | 'dark'
+  language?: Language
+  /** Set when editing a library entry directly (not a real slot). */
+  libraryEntryId?: string
+  /** Snapshot of the global shortcuts library — used by the Shortcuts palette tab. */
+  shortcutsLibrary?: ShortcutEntry[]
+  /** Snapshot of shortcut groups — used by the group filter in the Shortcuts palette tab. */
+  shortcutGroups?: ShortcutGroup[]
+  /** When true, the editor should immediately focus the name/label input. */
+  autoFocusName?: boolean
+}
+
+/** Per-node result returned from IPC_SHORTCUTS_PLAY */
+export interface PlayNodeResult {
+  index: number
+  success: boolean
+  error?: string
+}
+
 /** A discovered running process with optional icon and exe path. */
 export interface RunningProcess {
   exeName: string       // e.g. 'chrome.exe'
   displayName: string   // friendly name (process Name without extension)
   exePath: string | null
   iconDataUrl?: string
+}
+
+// ── Update check & install ────────────────────────────────────────────────────
+export const IPC_UPDATE_CHECK    = 'update:check'
+export const IPC_UPDATE_DOWNLOAD = 'update:download'
+export const IPC_UPDATE_INSTALL  = 'update:install'
+export const IPC_UPDATE_STATUS   = 'update:status'
+export const IPC_SHELL_OPEN_EXTERNAL = 'shell:open-external'
+
+export type UpdateState = 'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'error'
+
+export interface UpdateStatus {
+  state: UpdateState
+  currentVersion?: string
+  latestVersion?: string
+  downloadProgress?: number // 0–100
+  downloadedPath?: string
+  error?: string
 }
 
 // Re-export for convenience

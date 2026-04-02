@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import { AppearanceEditor } from '@settings/components/unified/AppearanceEditor'
 import { WinControls } from '@settings/components/WinControls'
 import { I18nProvider, useT } from '@settings/i18n/I18nContext'
-import type { AppearanceSlotData, CustomIconEntry } from '@shared/ipc.types'
+import type { AppearanceSlotData, CustomIconEntry, ResourceIconEntry } from '@shared/ipc.types'
 import type { SlotConfig } from '@shared/config.types'
 import type { Language } from '@shared/config.types'
 
@@ -40,6 +40,8 @@ declare global {
       removeCustomIcon: (id: string) => Promise<void>
       getRecentIcons: () => Promise<string[]>
       addRecentIcon: (iconRef: string) => void
+      getResourceIcons: () => Promise<ResourceIconEntry[]>
+      readSvgContent: (absPath: string) => Promise<string>
     }
   }
 }

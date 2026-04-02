@@ -4,8 +4,13 @@ import { Group, Panel, Separator } from 'react-resizable-panels'
 import type { Layout } from 'react-resizable-panels'
 import { HexColorPicker } from 'react-colorful'
 import { BUILTIN_ICONS } from '@shared/icons'
+import { SVGIcon } from '@shared/SVGIcon'
+import { UIIcon } from '@shared/UIIcon'
 import type { SlotConfig } from '@shared/config.types'
-import type { CustomIconEntry } from '@shared/ipc.types'
+import type { CustomIconEntry, ResourceIconEntry } from '@shared/ipc.types'
+
+/** Module-level cache so custom SVG content persists across re-renders. */
+const customSvgCache = new Map<string, string>()
 
 interface Props {
   slot: SlotConfig
@@ -49,15 +54,30 @@ function isPathRef(iconRef: string): boolean {
 // ── Small reusable icon button ───────────────────────────────────────────────
 
 interface IconBtnProps {
-  iconName?: string       // builtin name (renders SVG)
-  iconAbsPath?: string    // absolute path (renders <img>)
+  iconName?: string        // builtin name (renders inline SVG from BUILTIN_ICONS)
+  iconAbsPath?: string     // absolute path for custom icons (PNG/JPG fallback)
+  iconSvgContent?: string  // pre-loaded SVG string (resource icons or custom SVGs)
   isSelected: boolean
   label: string
   onClick: () => void
 }
 
-function IconBtn({ iconName, iconAbsPath, isSelected, label, onClick }: IconBtnProps): JSX.Element {
-  const svg = iconName ? BUILTIN_ICONS.find((i) => i.name === iconName)?.svg ?? null : null
+function IconBtn({ iconName, iconAbsPath, iconSvgContent, isSelected, label, onClick }: IconBtnProps): JSX.Element {
+  const builtinSvg = iconName ? BUILTIN_ICONS.find((i) => i.name === iconName)?.svg ?? null : null
+
+  const renderIcon = () => {
+    if (builtinSvg) {
+      return <SVGIcon svgString={builtinSvg} size={18} />
+    }
+    if (iconSvgContent) {
+      return <SVGIcon svgString={iconSvgContent} size={18} />
+    }
+    if (iconAbsPath) {
+      return <img src={`file://${iconAbsPath}`} style={{ width: 18, height: 18, objectFit: 'contain' }} />
+    }
+    return null
+  }
+
   return (
     <button
       onClick={onClick}
@@ -70,12 +90,7 @@ function IconBtn({ iconName, iconAbsPath, isSelected, label, onClick }: IconBtnP
         color: 'var(--c-text)', padding: 0,
       }}
     >
-      {svg ? (
-        // eslint-disable-next-line react/no-danger
-        <span dangerouslySetInnerHTML={{ __html: svg.replace('width="24" height="24"', 'width="18" height="18"') }} />
-      ) : iconAbsPath ? (
-        <img src={`file://${iconAbsPath}`} style={{ width: 18, height: 18, objectFit: 'contain' }} />
-      ) : null}
+      {renderIcon()}
     </button>
   )
 }
@@ -139,6 +154,10 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
   const [recentIcons, setRecentIcons] = useState<string[]>([])
   const [recentExpanded, setRecentExpanded] = useState(false)
   const [customExpanded, setCustomExpanded] = useState(false)
+  const [resourceIcons, setResourceIcons] = useState<ResourceIconEntry[]>([])
+  const [resourceExpanded, setResourceExpanded] = useState(false)
+  /** SVG content for custom user-uploaded .svg icons (not resource icons which have svgContent built-in). */
+  const [customSvgLoaded, setCustomSvgLoaded] = useState(0)  // bump to trigger re-render after cache fills
 
   // Dynamic column count via ResizeObserver
   const iconPanelRef = useRef<HTMLDivElement>(null)
@@ -158,7 +177,27 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
   useEffect(() => {
     window.appearanceAPI.getCustomIcons().then(setCustomIcons)
     window.appearanceAPI.getRecentIcons().then(setRecentIcons)
+    window.appearanceAPI.getResourceIcons().then(setResourceIcons)
   }, [])
+
+  // Load SVG content for custom user-uploaded .svg icons
+  useEffect(() => {
+    const svgIcons = customIcons.filter(
+      (e) => e.absPath.endsWith('.svg') && !customSvgCache.has(e.absPath)
+    )
+    if (svgIcons.length === 0) return
+    Promise.all(
+      svgIcons.map((e) =>
+        window.appearanceAPI.readSvgContent(e.absPath).then((svg) => ({ absPath: e.absPath, svg }))
+      )
+    ).then((results) => {
+      let changed = false
+      for (const r of results) {
+        if (r.svg) { customSvgCache.set(r.absPath, r.svg); changed = true }
+      }
+      if (changed) setCustomSvgLoaded((n) => n + 1)
+    })
+  }, [customIcons])
 
   // ── Icon selection handlers ────────────────────────────────────────────────
 
@@ -195,6 +234,15 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
       }
     },
     [customIcons, slot, onUpdate, handleSelectBuiltin, handleSelectCustom]
+  )
+
+  const handleSelectResource = useCallback(
+    (entry: ResourceIconEntry) => {
+      onUpdate({ ...slot, icon: entry.absPath, iconIsCustom: true })
+      window.appearanceAPI.addRecentIcon(entry.absPath)
+      setRecentIcons((prev) => [entry.absPath, ...prev.filter((r) => r !== entry.absPath)].slice(0, 30))
+    },
+    [slot, onUpdate]
   )
 
   const handleAddCustom = useCallback(async () => {
@@ -275,9 +323,9 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
                 title={t('appearance.resetToTheme')}
                 style={{
                   background: 'none', border: 'none', cursor: 'pointer',
-                  color: 'var(--c-text-dim)', fontSize: 14, padding: 0, lineHeight: 1,
+                  color: 'var(--c-text-dim)', padding: 0, display: 'flex', alignItems: 'center',
                 }}
-              >×</button>
+              ><UIIcon name="close" size={14} /></button>
             )}
           </div>
         </div>
@@ -312,13 +360,18 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
 
   // ── Icon panel content ────────────────────────────────────────────────────
 
-  const filteredIcons = search.trim()
-    ? BUILTIN_ICONS.filter((ic) => ic.label.toLowerCase().includes(search.toLowerCase()))
+  const searchLower = search.trim().toLowerCase()
+  const filteredIcons = searchLower
+    ? BUILTIN_ICONS.filter((ic) => ic.label.toLowerCase().includes(searchLower))
     : BUILTIN_ICONS
+  const filteredResourceIcons = searchLower
+    ? resourceIcons.filter((ic) => ic.name.toLowerCase().includes(searchLower))
+    : resourceIcons
 
   // Capacity calculations
   const recentDefaultCount = cols                    // 1 row
   const customDefaultCount = cols * 2 - 1           // 2 rows minus 1 slot for "Add" button
+  const resourceDefaultCount = cols * 4             // 4 rows
 
   const visibleRecent = recentExpanded ? recentIcons : recentIcons.slice(0, recentDefaultCount)
   const needsRecentToggle = recentIcons.length > recentDefaultCount
@@ -326,23 +379,44 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
   const visibleCustom = customExpanded ? customIcons : customIcons.slice(0, customDefaultCount)
   const needsCustomToggle = customIcons.length > customDefaultCount
 
+  const visibleResource = resourceExpanded ? filteredResourceIcons : filteredResourceIcons.slice(0, resourceDefaultCount)
+  const needsResourceToggle = filteredResourceIcons.length > resourceDefaultCount
+
   const HEADER_H = 36
 
   const renderIconPanel = () => {
-    // When searching: flat filtered list, no categories
+    // When searching: flat filtered list across all icon sources
     if (search.trim()) {
       return (
-        <IconGrid cols={cols}>
-          {filteredIcons.map((ic) => (
-            <IconBtn
-              key={ic.name}
-              iconName={ic.name}
-              isSelected={slot.icon === ic.name && !slot.iconIsCustom}
-              label={ic.label}
-              onClick={() => handleSelectBuiltin(ic)}
-            />
-          ))}
-        </IconGrid>
+        <>
+          {filteredIcons.length > 0 && (
+            <IconGrid cols={cols}>
+              {filteredIcons.map((ic) => (
+                <IconBtn
+                  key={ic.name}
+                  iconName={ic.name}
+                  isSelected={slot.icon === ic.name && !slot.iconIsCustom}
+                  label={ic.label}
+                  onClick={() => handleSelectBuiltin(ic)}
+                />
+              ))}
+            </IconGrid>
+          )}
+          {filteredResourceIcons.length > 0 && (
+            <IconGrid cols={cols}>
+              {filteredResourceIcons.map((entry) => (
+                <IconBtn
+                  key={entry.filename}
+                  iconAbsPath={entry.absPath}
+                  iconSvgContent={entry.svgContent}
+                  isSelected={slot.icon === entry.absPath && slot.iconIsCustom}
+                  label={entry.name}
+                  onClick={() => handleSelectResource(entry)}
+                />
+              ))}
+            </IconGrid>
+          )}
+        </>
       )
     }
 
@@ -355,16 +429,20 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
             <IconGrid cols={cols}>
               {visibleRecent.map((iconRef) => {
                 const isPath = isPathRef(iconRef)
-                const entry = isPath ? customIcons.find((e) => e.absPath === iconRef) : undefined
+                const customEntry = isPath ? customIcons.find((e) => e.absPath === iconRef) : undefined
+                const resourceEntry = isPath ? resourceIcons.find((e) => e.absPath === iconRef) : undefined
                 const builtinIc = !isPath ? BUILTIN_ICONS.find((i) => i.name === iconRef) : undefined
-                const label = entry?.name ?? builtinIc?.label ?? iconRef
+                const label = customEntry?.name ?? resourceEntry?.name ?? builtinIc?.label ?? iconRef
                 const isSelected = slot.icon === iconRef
+                // Resolve pre-loaded SVG: resource icons have svgContent, custom SVGs use cache
+                const svgContent = resourceEntry?.svgContent ?? (isPath ? customSvgCache.get(iconRef) : undefined)
 
                 return (
                   <IconBtn
                     key={iconRef}
                     iconName={!isPath ? iconRef : undefined}
                     iconAbsPath={isPath ? iconRef : undefined}
+                    iconSvgContent={svgContent}
                     isSelected={isSelected}
                     label={label}
                     onClick={() => handleSelectFromRecent(iconRef)}
@@ -398,6 +476,7 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
             <div key={entry.id} style={{ position: 'relative' }}>
               <IconBtn
                 iconAbsPath={entry.absPath}
+                iconSvgContent={customSvgCache.get(entry.absPath)}
                 isSelected={slot.icon === entry.absPath && slot.iconIsCustom}
                 label={entry.name}
                 onClick={() => handleSelectCustom(entry)}
@@ -413,9 +492,9 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
                   background: 'var(--c-danger, #e05c5c)', border: 'none', cursor: 'pointer',
                   display: 'none',
                   alignItems: 'center', justifyContent: 'center',
-                  color: '#fff', fontSize: 9, fontWeight: 700, padding: 0, lineHeight: 1,
+                  color: '#fff', padding: 0,
                 }}
-              >×</button>
+              ><UIIcon name="close" size={9} /></button>
             </div>
           ))}
 
@@ -424,7 +503,7 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
           )}
         </IconGrid>
 
-        {/* ── C. Default Icons ── */}
+        {/* ── C. Default Icons (built-in + resource) ── */}
         <SectionHeader label={t('appearance.default')} />
         <IconGrid cols={cols}>
           {BUILTIN_ICONS.map((ic) => (
@@ -436,6 +515,19 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
               onClick={() => handleSelectBuiltin(ic)}
             />
           ))}
+          {visibleResource.map((entry) => (
+            <IconBtn
+              key={entry.filename}
+              iconAbsPath={entry.absPath}
+              iconSvgContent={entry.svgContent}
+              isSelected={slot.icon === entry.absPath && slot.iconIsCustom}
+              label={entry.name}
+              onClick={() => handleSelectResource(entry)}
+            />
+          ))}
+          {needsResourceToggle && (
+            <ToggleBtn expanded={resourceExpanded} onClick={() => setResourceExpanded((e) => !e)} showLess={t('appearance.showLess')} showMore={t('appearance.showMore')} />
+          )}
         </IconGrid>
       </>
     )
@@ -445,9 +537,19 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
 
   const previewBg = slot.bgColor ?? undefined
   const previewIconColor = slot.iconColor ?? undefined
-  const iconSvgForPreview = slot.iconIsCustom
-    ? null
-    : BUILTIN_ICONS.find((i) => i.name === slot.icon)?.svg ?? null
+
+  // Resolve inline SVG for preview: builtin → BUILTIN_ICONS, resource → svgContent, custom SVG → cache
+  const previewSvgString: string | null = (() => {
+    if (!slot.iconIsCustom) return BUILTIN_ICONS.find((i) => i.name === slot.icon)?.svg ?? null
+    const resourceEntry = resourceIcons.find((e) => e.absPath === slot.icon)
+    if (resourceEntry) return resourceEntry.svgContent
+    return customSvgCache.get(slot.icon) ?? null
+  })()
+  // Determine if the icon is a non-SVG custom file (PNG/JPG etc.) with no inline SVG available
+  const isNonSvgCustom = slot.iconIsCustom && !previewSvgString
+
+  // suppress unused-var lint for customSvgLoaded (it's used only to trigger re-render)
+  void customSvgLoaded
 
   return (
     <Group
@@ -513,17 +615,13 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
                 boxShadow: '0 2px 10px rgba(0,0,0,0.35)',
               }}
             >
-              {iconSvgForPreview ? (
-                <div
-                  // eslint-disable-next-line react/no-danger
-                  dangerouslySetInnerHTML={{ __html: iconSvgForPreview.replace('width="24" height="24"', 'width="26" height="26"') }}
-                  style={{
-                    color: previewIconColor ?? 'var(--ring-icon-color)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    width: 26, height: 26,
-                  }}
+              {previewSvgString ? (
+                <SVGIcon
+                  svgString={previewSvgString}
+                  size={26}
+                  color={previewIconColor ?? 'var(--ring-icon-color)'}
                 />
-              ) : slot.iconIsCustom ? (
+              ) : isNonSvgCustom ? (
                 <img
                   src={`file://${slot.icon}`}
                   style={{ width: 26, height: 26, objectFit: 'contain' }}
