@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useSettings } from '../../context/SettingsContext'
 import { useT } from '../../i18n/I18nContext'
+import { UIIcon } from '@shared/UIIcon'
 
 export function LeftPanel(): JSX.Element {
   const t = useT()
@@ -251,6 +252,7 @@ export function LeftPanel(): JSX.Element {
             e.currentTarget.style.borderColor = 'var(--c-border)'
           }}
         >
+          <UIIcon name="play_arrow" size={12} />
           {t('panel.animPreview')}
         </button>
       </div>

@@ -7,12 +7,12 @@ interface NotificationStrings {
 
 const notificationStrings: Record<Language, NotificationStrings> = {
   en: {
-    title: 'Action Ring',
-    body: (trigger) => `Running in the system tray. Press [${trigger}] to open the Action Ring.`,
+    title: 'Running in System Tray',
+    body: (trigger) => `Press [${trigger}] to open Action Ring.`,
   },
   ko: {
-    title: 'Action Ring',
-    body: (trigger) => `시스템 트레이에서 실행 중입니다. [${trigger}] 를 눌러 액션 링을 열 수 있습니다.`,
+    title: '시스템 트레이에서 실행 중',
+    body: (trigger) => `[${trigger}] 를 눌러 액션 링을 열 수 있습니다.`,
   },
 }
 

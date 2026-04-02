@@ -1,6 +1,5 @@
-import { app, ipcMain, systemPreferences, Notification } from 'electron'
-import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { join } from 'path'
+import { app, ipcMain, systemPreferences } from 'electron'
+import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { ConfigStore } from './ConfigStore'
 import { WindowManager } from './WindowManager'
 import { HookManager } from './HookManager'
@@ -13,6 +12,9 @@ import { registerAppearanceHandlers } from './ipc/appearanceHandlers'
 import { registerIconHandlers } from './ipc/iconHandlers'
 import { registerProfileHandlers } from './ipc/profileHandlers'
 import { registerProcessHandlers } from './ipc/processHandlers'
+import { registerShortcutsHandlers } from './ipc/shortcutsHandlers'
+import { registerUpdateHandlers } from './ipc/updateHandlers'
+import { SequenceManager } from './SequenceManager'
 import {
   IPC_TRIGGER_START_MOUSE_CAPTURE,
   IPC_TRIGGER_CANCEL_MOUSE_CAPTURE,
@@ -22,8 +24,14 @@ import { IconStore } from './IconStore'
 import { WindowTracker } from './WindowTracker'
 import { getNotificationStrings } from '@shared/mainI18n'
 
-// Set app name before ready — affects Task Manager / Activity Monitor process name
-app.setName('Action Ring')
+// Set app name and AppUserModelId before ready — affects Task Manager / Activity Monitor process name
+// On Windows, AppUserModelId MUST be set before app.whenReady() to properly register taskbar identity.
+// Using the product name ('ActionRing') directly so Windows Toast notifications display the friendly
+// name in the sender header instead of the raw reverse-domain appId.
+app.setName('ActionRing')
+if (process.platform === 'win32') {
+  app.setAppUserModelId('ActionRing')
+}
 
 async function main(): Promise<void> {
   // Prevent multiple instances
@@ -35,7 +43,7 @@ async function main(): Promise<void> {
 
   await app.whenReady()
 
-  electronApp.setAppUserModelId('com.actionring')
+  electronApp.setAppUserModelId('ActionRing')
 
   // Check macOS accessibility permissions
   if (process.platform === 'darwin') {
@@ -50,9 +58,16 @@ async function main(): Promise<void> {
   const configStore = new ConfigStore()
   const iconStore = new IconStore()
   const windowManager = new WindowManager()
-  const actionExecutor = new ActionExecutor()
+  const actionExecutor = new ActionExecutor(configStore)
   const loginStartup = new LoginStartup()
   const windowTracker = new WindowTracker()
+
+  // Wire up parallel sequence manager
+  const sequenceManager = new SequenceManager(
+    () => windowManager.getProgressWindow(),
+    () => windowManager.createProgressWindow(),
+  )
+  actionExecutor.setSequenceManager(sequenceManager)
 
   // Sync login startup state
   loginStartup.sync(configStore.get().startOnLogin)
@@ -67,6 +82,8 @@ async function main(): Promise<void> {
   registerIconHandlers(iconStore)
   registerProfileHandlers(configStore, windowManager)
   registerProcessHandlers(configStore, windowManager)
+  registerShortcutsHandlers(windowManager, configStore, actionExecutor)
+  registerUpdateHandlers(windowManager)
 
   // Create system tray
   const trayManager = new TrayManager(configStore, () => {
@@ -81,20 +98,13 @@ async function main(): Promise<void> {
   const MOD_LABELS: Record<string, string> = { ctrl: 'Ctrl', alt: 'Alt', shift: 'Shift', meta: 'Win' }
   windowManager.setSettingsHideCallback(() => {
     const config = configStore.get()
+    if (config.trayNotificationsEnabled === false) return
     const trigger = config.trigger
     const keys = trigger.triggerKeys ?? trigger.modifiers.map((m) => MOD_LABELS[m] ?? m).join('+')
     const button = BUTTON_LABELS[trigger.button] ?? `Button ${trigger.button}`
     const triggerDisplay = keys ? `${keys} + ${button}` : button
     const n = getNotificationStrings(config.language)
-    const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon.svg'
-    const iconPath = is.dev
-      ? join(process.cwd(), 'resources/icons', iconFile)
-      : join(process.resourcesPath, 'icons', iconFile)
-    new Notification({
-      title: n.title,
-      body: n.body(triggerDisplay),
-      icon: iconPath,
-    }).show()
+    trayManager.showNotification(n.title, n.body(triggerDisplay))
   })
 
   // Show settings window on first launch so user can configure triggers/actions

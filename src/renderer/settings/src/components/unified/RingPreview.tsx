@@ -1,7 +1,10 @@
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useDroppable, useDndMonitor } from '@dnd-kit/core'
 import { useSettings } from '../../context/SettingsContext'
 import { useT } from '../../i18n/I18nContext'
 import { BUILTIN_ICONS } from '@shared/icons'
+import { SVGIcon } from '@shared/SVGIcon'
 import type { SlotConfig } from '@shared/config.types'
 
 const VIEWBOX_HALF = 230
@@ -42,6 +45,35 @@ function getSubSlotAngle(
   return folderAngle - totalArc / 2 + subIndex * step
 }
 
+// ── Drop zone overlay rendered inside each slot during drag ───────────────────
+
+function SlotDropZone({ id, buttonR }: { id: string; buttonR: number }): JSX.Element {
+  const { setNodeRef, isOver } = useDroppable({ id })
+  return (
+    <foreignObject
+      x={-buttonR}
+      y={-buttonR}
+      width={buttonR * 2}
+      height={buttonR * 2}
+      style={{ overflow: 'visible' }}
+    >
+      <div
+        ref={setNodeRef}
+        style={{
+          width: '100%',
+          height: '100%',
+          borderRadius: '50%',
+          border: `2px solid ${isOver ? 'var(--c-accent)' : 'transparent'}`,
+          background: isOver ? 'rgba(99,102,241,0.18)' : 'transparent',
+          boxSizing: 'border-box',
+          transition: 'border-color 0.12s, background 0.12s',
+          pointerEvents: 'all',
+        }}
+      />
+    </foreignObject>
+  )
+}
+
 interface SlotButtonProps {
   slot: SlotConfig
   cx: number
@@ -57,13 +89,18 @@ interface SlotButtonProps {
   onClick: () => void
   badge?: React.ReactNode
   animateIn?: boolean
+  dropZoneId?: string
+  isDraggingShortcut?: boolean
+  svgCache?: Record<string, string>
 }
 
 function SlotButton({
   slot, cx, cy, buttonR, iconRenderSize, labelFontSize, showText,
-  foW, foH, isSelected, dimmed, onClick, badge, animateIn = false
+  foW, foH, isSelected, dimmed, onClick, badge, animateIn = false,
+  dropZoneId, isDraggingShortcut = false, svgCache = {},
 }: SlotButtonProps): JSX.Element {
   const iconSvg = slot.iconIsCustom ? null : getIconSvg(slot.icon)
+  const customSvgString = slot.iconIsCustom ? (svgCache[slot.icon] ?? null) : null
 
   const hoverG = (
     <g
@@ -80,7 +117,7 @@ function SlotButton({
       <circle
         cx={0} cy={0} r={buttonR}
         style={{
-          fill: isSelected ? 'var(--ring-seg-bg-active)' : 'var(--ring-seg-bg)',
+          fill: isSelected ? 'var(--ring-seg-bg-active)' : (slot.bgColor ?? 'var(--ring-seg-bg)'),
           stroke: isSelected ? 'var(--ring-accent)' : 'var(--ring-seg-border)',
           strokeWidth: isSelected ? 2 : 1,
           transition: 'fill 0.15s ease, stroke 0.15s ease',
@@ -97,15 +134,18 @@ function SlotButton({
           width: foW, height: foH, gap: 2,
         }}>
           {iconSvg ? (
-            // eslint-disable-next-line react/no-danger
-            <div
-              dangerouslySetInnerHTML={{ __html: iconSvg.replace('width="24" height="24"', `width="${iconRenderSize}" height="${iconRenderSize}"`) }}
-              style={{
-                width: iconRenderSize, height: iconRenderSize,
-                flexShrink: 0, display: 'flex',
-                opacity: isSelected ? 1 : 0.7,
-                color: 'var(--ring-icon-color)',
-              }}
+            <SVGIcon
+              svgString={iconSvg}
+              size={iconRenderSize}
+              color={slot.iconColor ?? 'var(--ring-icon-color)'}
+              opacity={isSelected ? 1 : 0.7}
+            />
+          ) : customSvgString ? (
+            <SVGIcon
+              svgString={customSvgString}
+              size={iconRenderSize}
+              color={slot.iconColor ?? 'var(--ring-icon-color)'}
+              opacity={isSelected ? 1 : 0.7}
             />
           ) : slot.iconIsCustom ? (
             <img
@@ -115,7 +155,7 @@ function SlotButton({
           ) : null}
           {showText && (
             <span style={{
-              color: isSelected ? 'var(--ring-text-active)' : 'var(--ring-text)',
+              color: slot.textColor ?? (isSelected ? 'var(--ring-text-active)' : 'var(--ring-text)'),
               fontSize: labelFontSize,
               fontFamily: 'system-ui, sans-serif',
               textAlign: 'center',
@@ -148,6 +188,9 @@ function SlotButton({
         </motion.g>
       ) : hoverG}
       {badge}
+      {isDraggingShortcut && dropZoneId && (
+        <SlotDropZone id={dropZoneId} buttonR={buttonR} />
+      )}
     </g>
   )
 }
@@ -160,6 +203,40 @@ export function RingPreview(): JSX.Element {
     selectedSubSlotIndex, setSelectedSubSlotIndex,
     animPreviewKey,
   } = useSettings()
+
+  const [isDraggingShortcut, setIsDraggingShortcut] = useState(false)
+  const [svgCache, setSvgCache] = useState<Record<string, string>>({})
+
+  // Load SVG content for any custom .svg icons in the current preview slots
+  useEffect(() => {
+    const allSlots: SlotConfig[] = []
+    for (const s of (previewDraft?.slots ?? [])) {
+      allSlots.push(s)
+      if (s.subSlots?.length) allSlots.push(...s.subSlots)
+    }
+    const paths = [...new Set(
+      allSlots
+        .filter((s) => s.iconIsCustom && s.icon.endsWith('.svg') && !svgCache[s.icon])
+        .map((s) => s.icon)
+    )]
+    if (paths.length === 0) return
+    Promise.all(
+      paths.map((p) => window.settingsAPI.readSvgContent(p).then((svg) => ({ p, svg })))
+    ).then((results) => {
+      const updates: Record<string, string> = {}
+      for (const r of results) {
+        if (r.svg) updates[r.p] = r.svg
+      }
+      if (Object.keys(updates).length > 0) setSvgCache((prev) => ({ ...prev, ...updates }))
+    })
+  }, [previewDraft?.slots])
+  useDndMonitor({
+    onDragStart: (event) => {
+      if (event.active.data.current?.entry) setIsDraggingShortcut(true)
+    },
+    onDragEnd: () => setIsDraggingShortcut(false),
+    onDragCancel: () => setIsDraggingShortcut(false),
+  })
 
   const { slots } = draft
   const { slots: previewSlots, appearance } = previewDraft
@@ -289,6 +366,19 @@ export function RingPreview(): JSX.Element {
           viewBox={`${-viewHalf} ${-viewHalf} ${viewHalf * 2} ${viewHalf * 2}`}
           style={{ display: 'block', maxWidth: '100%', maxHeight: '100%', opacity: appearance.opacity }}
         >
+          {/* Background — click to deselect any selected slot */}
+          <rect
+            x={-viewHalf} y={-viewHalf}
+            width={viewHalf * 2} height={viewHalf * 2}
+            fill="transparent"
+            style={{ cursor: 'default' }}
+            onClick={() => {
+              setSelectedSlotIndex(null)
+              setSelectedSubSlotIndex(null)
+              setEditingFolderIndex(null)
+            }}
+          />
+
           {/* Faint primary radius guide */}
           <circle
             cx={0} cy={0} r={radius}
@@ -334,6 +424,9 @@ export function RingPreview(): JSX.Element {
                 isSelected={isSelected || isFolderOpen}
                 dimmed={dimmed}
                 onClick={() => handlePrimaryClick(slotIndex)}
+                dropZoneId={`ring-slot-${slotIndex}`}
+                isDraggingShortcut={isDraggingShortcut}
+                svgCache={svgCache}
                 badge={
                   isFolder ? (
                     <g style={{ pointerEvents: 'none' }}>
@@ -382,6 +475,9 @@ export function RingPreview(): JSX.Element {
                   dimmed={false}
                   onClick={() => handleSubSlotClick(subIdx)}
                   animateIn={true}
+                  dropZoneId={`ring-subslot-${subIdx}`}
+                  isDraggingShortcut={isDraggingShortcut}
+                  svgCache={svgCache}
                 />
               )
             })}

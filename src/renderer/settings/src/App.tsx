@@ -2,12 +2,13 @@ import { useState, useEffect, Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 import { GeneralTab } from './components/tabs/GeneralTab'
 import { AboutTab } from './components/tabs/AboutTab'
+import { ShortcutsTab } from './components/tabs/ShortcutsTab'
 import { UnifiedTab } from './components/unified/UnifiedTab'
 import { SettingsProvider } from './context/SettingsContext'
 import { WinControls } from './components/WinControls'
 import { I18nProvider, useT } from './i18n/I18nContext'
 import type { AppConfig, ThemePreference, AppEntry, AppProfile, SlotConfig, Language } from '@shared/config.types'
-import type { AppearanceSlotData, RunningProcess } from '@shared/ipc.types'
+import type { AppearanceSlotData, RunningProcess, ShortcutsSlotData, UpdateStatus, ResourceIconEntry } from '@shared/ipc.types'
 
 declare global {
   interface Window {
@@ -19,6 +20,8 @@ declare global {
       pickIcon: () => Promise<string | null>
       openAppearanceEditor: (data: AppearanceSlotData) => Promise<void>
       onAppearanceUpdated: (cb: (data: AppearanceSlotData) => void) => void
+      openShortcutsEditor: (data: ShortcutsSlotData) => Promise<void>
+      onShortcutsUpdated: (cb: (data: ShortcutsSlotData) => void) => void
       minimizeWindow: () => void
       maximizeWindow: () => void
       // App management
@@ -52,6 +55,18 @@ declare global {
       resetConfig: () => Promise<AppConfig | null>
       exportAllData: () => Promise<boolean>
       importAllData: () => Promise<boolean>
+      // Update check & install
+      checkForUpdates: () => Promise<UpdateStatus>
+      downloadUpdate: () => void
+      installUpdate: () => void
+      onUpdateStatus: (cb: (status: UpdateStatus) => void) => void
+      // Shell utilities
+      openExternalUrl: (url: string) => Promise<void>
+      // SVG icon loading
+      readSvgContent: (absPath: string) => Promise<string>
+      // Resource icons
+      getResourceIcons: () => Promise<ResourceIconEntry[]>
+      addRecentIcon: (iconRef: string) => void
     }
   }
 }
@@ -114,7 +129,7 @@ function ErrorFallback({ error, onRecover }: { error: Error; onRecover: () => vo
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-type Tab = 'configure' | 'general' | 'about'
+type Tab = 'configure' | 'shortcuts' | 'general' | 'about'
 
 function applyTheme(pref: ThemePreference): void {
   const resolved =
@@ -167,6 +182,7 @@ function AppInner(): JSX.Element {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: 'configure', label: t('tab.configure') },
+    { id: 'shortcuts', label: t('tab.shortcuts') },
     { id: 'general', label: t('tab.general') },
     { id: 'about', label: t('tab.about') },
   ]
@@ -251,13 +267,16 @@ function AppInner(): JSX.Element {
         <ErrorBoundary>
           <div style={{ flex: 1, overflow: 'hidden' }}>
             {activeTab === 'general' && (
-              <div style={{ height: '100%', overflowY: 'auto', padding: 24 }}>
-                <GeneralTab config={config} onSave={(c) => handleSave(c)} />
+              <div style={{ height: '100%', overflowY: 'auto', background: 'var(--c-bg)', display: 'flex', justifyContent: 'center' }}>
+                <div style={{ width: '100%', maxWidth: 688, background: 'var(--c-surface)', boxShadow: '0 4px 20px rgba(0,0,0,0.2)', padding: 24, minHeight: '100%' }}>
+                  <GeneralTab config={config} onSave={(c) => handleSave(c)} />
+                </div>
               </div>
             )}
             {activeTab === 'configure' && <UnifiedTab />}
+            {activeTab === 'shortcuts' && <ShortcutsTab />}
             {activeTab === 'about' && (
-              <div style={{ height: '100%', overflowY: 'auto', padding: 24 }}>
+              <div style={{ height: '100%', overflowY: 'auto' }}>
                 <AboutTab />
               </div>
             )}

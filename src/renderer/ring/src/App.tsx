@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
 import { RingOverlay } from './components/RingOverlay'
+import { svgIconCache } from './svgIconCache'
 import type { RingShowPayload, RingCursorMovePayload } from '@shared/ipc.types'
 import type { AppearanceConfig, SlotConfig } from '@shared/config.types'
 
@@ -28,6 +29,11 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     window.ringAPI.onShow((payload) => {
+      // Populate the SVG cache before updating slots so SegmentIcon reads fresh data
+      svgIconCache.clear()
+      for (const [path, svg] of Object.entries(payload.resolvedSvgIcons ?? {})) {
+        svgIconCache.set(path, svg)
+      }
       setSlots(payload.slots)
       setAppearance(payload.appearance)
       // Apply theme from payload

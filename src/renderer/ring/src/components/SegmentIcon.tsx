@@ -1,4 +1,6 @@
 import { BUILTIN_ICON_MAP } from '@shared/icons'
+import { SVGIcon } from '@shared/SVGIcon'
+import { svgIconCache } from '../svgIconCache'
 
 interface SegmentIconProps {
   icon: string
@@ -9,6 +11,11 @@ interface SegmentIconProps {
 
 export function SegmentIcon({ icon, iconIsCustom, size = 24, color }: SegmentIconProps): JSX.Element {
   if (iconIsCustom) {
+    const svgString = svgIconCache.get(icon)
+    if (svgString) {
+      return <SVGIcon svgString={svgString} size={size} color={color ?? 'var(--ring-icon-color)'} />
+    }
+    // Fallback to <img> for non-SVG custom icons (PNG, JPG, ICO)
     return (
       <img
         src={`file://${icon}`}
@@ -27,16 +34,11 @@ export function SegmentIcon({ icon, iconIsCustom, size = 24, color }: SegmentIco
           height: size,
           borderRadius: '50%',
           background: 'var(--ring-icon-color)',
-      opacity: 0.3
+          opacity: 0.3
         }}
       />
     )
   }
 
-  return (
-    <span
-      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: size, height: size, flexShrink: 0, color: color ?? 'var(--ring-icon-color)' }}
-      dangerouslySetInnerHTML={{ __html: builtinIcon.svg.replace('width="24" height="24"', `width="${size}" height="${size}"`) }}
-    />
-  )
+  return <SVGIcon svgString={builtinIcon.svg} size={size} color={color ?? 'var(--ring-icon-color)'} />
 }

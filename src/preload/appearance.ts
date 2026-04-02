@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { SlotConfig } from '@shared/config.types'
-import type { AppearanceSlotData, CustomIconEntry } from '@shared/ipc.types'
+import type { AppearanceSlotData, CustomIconEntry, ResourceIconEntry } from '@shared/ipc.types'
 import {
   IPC_APPEARANCE_GET_DATA,
   IPC_APPEARANCE_UPDATE,
@@ -13,6 +13,8 @@ import {
   IPC_ICONS_REMOVE_CUSTOM,
   IPC_ICONS_GET_RECENT,
   IPC_ICONS_ADD_RECENT,
+  IPC_ICONS_GET_RESOURCE,
+  IPC_ICONS_READ_SVG,
 } from '@shared/ipc.types'
 
 contextBridge.exposeInMainWorld('appearanceAPI', {
@@ -57,4 +59,11 @@ contextBridge.exposeInMainWorld('appearanceAPI', {
   addRecentIcon: (iconRef: string): void => {
     ipcRenderer.send(IPC_ICONS_ADD_RECENT, iconRef)
   },
+
+  getResourceIcons: (): Promise<ResourceIconEntry[]> =>
+    ipcRenderer.invoke(IPC_ICONS_GET_RESOURCE),
+
+  /** Read raw SVG text for an absolute .svg file path. Returns empty string on error. */
+  readSvgContent: (absPath: string): Promise<string> =>
+    ipcRenderer.invoke(IPC_ICONS_READ_SVG, absPath),
 })

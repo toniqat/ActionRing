@@ -53,11 +53,13 @@ interface TriggerKeyRecorderProps {
 function TriggerKeyRecorder({ triggerKeys, onChange }: TriggerKeyRecorderProps): JSX.Element {
   const t = useT()
   const [recording, setRecording] = useState(false)
+  const [hasInput, setHasInput] = useState(false)
   const pendingRef = useRef<string>(triggerKeys)
   const [pendingDisplay, setPendingDisplay] = useState(triggerKeys)
 
   const stopRecording = useCallback((save: boolean) => {
     setRecording(false)
+    setHasInput(false)
     if (save && pendingRef.current) {
       onChange(pendingRef.current)
     }
@@ -83,6 +85,7 @@ function TriggerKeyRecorder({ triggerKeys, onChange }: TriggerKeyRecorderProps):
       if (combo) {
         pendingRef.current = combo
         setPendingDisplay(combo)
+        setHasInput(true)
       }
     }
 
@@ -98,12 +101,13 @@ function TriggerKeyRecorder({ triggerKeys, onChange }: TriggerKeyRecorderProps):
     } else {
       pendingRef.current = triggerKeys
       setPendingDisplay(triggerKeys)
+      setHasInput(false)
       setRecording(true)
     }
   }
 
   const displayText = recording
-    ? (pendingDisplay || t('recorder.pressKeys'))
+    ? (hasInput ? pendingDisplay : t('recorder.recording'))
     : (triggerKeys || t('recorder.none'))
 
   return (
@@ -119,7 +123,7 @@ function TriggerKeyRecorder({ triggerKeys, onChange }: TriggerKeyRecorderProps):
         onClick={handleClick}
         title={recording ? t('recorder.clickToSave') : t('recorder.clickToRecord')}
         style={{
-          width: '100%',
+          width: 'auto',
           padding: '8px 12px',
           borderRadius: 8,
           border: `1.5px solid ${recording ? '#ef4444' : 'var(--c-border)'}`,
@@ -134,14 +138,13 @@ function TriggerKeyRecorder({ triggerKeys, onChange }: TriggerKeyRecorderProps):
           alignItems: 'center',
           gap: 6,
           animation: recording ? 'trigger-key-pulse 1.2s ease-in-out infinite' : 'none',
+          whiteSpace: 'nowrap',
         }}
       >
         <span style={{ fontSize: 9, lineHeight: 1, flexShrink: 0 }}>
           {recording ? '●' : '○'}
         </span>
-        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {recording ? `${t('recorder.recording')} ${pendingDisplay}` : displayText}
-        </span>
+        <span>{displayText}</span>
         {recording && (
           <span style={{ fontSize: 10, color: 'rgba(239,68,68,0.6)', flexShrink: 0 }}>
             {t('recorder.clickToSaveHint')}
@@ -189,7 +192,7 @@ function MouseCaptureButton({ button, onCapture }: MouseCaptureButtonProps): JSX
       disabled={listening}
       title={listening ? t('recorder.listenMsg') : t('recorder.clickToChangeHint')}
       style={{
-        width: '100%',
+        width: 'auto',
         padding: '8px 12px',
         borderRadius: 8,
         border: `1.5px solid ${listening ? '#ef4444' : 'var(--c-border)'}`,
@@ -204,6 +207,7 @@ function MouseCaptureButton({ button, onCapture }: MouseCaptureButtonProps): JSX
         alignItems: 'center',
         justifyContent: 'center',
         gap: 6,
+        whiteSpace: 'nowrap',
         animation: listening ? 'pulse-capture 1.2s ease-in-out infinite' : 'none',
       }}
     >
@@ -337,12 +341,8 @@ export function GeneralTab({ config, onSave }: Props): JSX.Element {
             {t('general.trigger')}
           </span>
           <div className="flex items-center gap-2" style={{ marginLeft: 48 }}>
-            <div style={{ width: 152 }}>
-              <TriggerKeyRecorder triggerKeys={currentTriggerKeys} onChange={setTriggerKeys} />
-            </div>
-            <div style={{ width: 132 }}>
-              <MouseCaptureButton button={button} onCapture={setButton} />
-            </div>
+            <TriggerKeyRecorder triggerKeys={currentTriggerKeys} onChange={setTriggerKeys} />
+            <MouseCaptureButton button={button} onCapture={setButton} />
           </div>
         </div>
 
@@ -362,6 +362,17 @@ export function GeneralTab({ config, onSave }: Props): JSX.Element {
           className="w-[18px] h-[18px] cursor-pointer accent-[var(--c-accent)]"
         />
         <span className="text-[14px] text-[var(--c-text)]">{t('general.startOnLogin')}</span>
+      </label>
+
+      {/* Tray Notifications */}
+      <label className="flex items-center gap-3 w-fit cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={config.trayNotificationsEnabled !== false}
+          onChange={(e) => onSave({ ...config, trayNotificationsEnabled: e.target.checked })}
+          className="w-[18px] h-[18px] cursor-pointer accent-[var(--c-accent)]"
+        />
+        <span className="text-[14px] text-[var(--c-text)]">{t('general.trayNotifications')}</span>
       </label>
 
       {/* ── Data Management ── */}

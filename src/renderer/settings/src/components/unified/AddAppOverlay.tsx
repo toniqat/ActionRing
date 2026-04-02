@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { useT } from '../../i18n/I18nContext'
+import { UIIcon } from '@shared/UIIcon'
 import type { RunningProcess } from '@shared/ipc.types'
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -403,7 +404,7 @@ export function AddAppOverlay({
         }}
         title={t('addapp.close')}
       >
-        ✕
+        <UIIcon name="close" size={16} />
       </button>
 
       <motion.div

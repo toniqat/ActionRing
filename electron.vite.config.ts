@@ -23,7 +23,9 @@ export default defineConfig({
         input: {
           ring: resolve('src/preload/ring.ts'),
           settings: resolve('src/preload/settings.ts'),
-          appearance: resolve('src/preload/appearance.ts')
+          appearance: resolve('src/preload/appearance.ts'),
+          shortcuts: resolve('src/preload/shortcuts.ts'),
+          progress: resolve('src/preload/progress.ts')
         }
       }
     }
@@ -33,7 +35,9 @@ export default defineConfig({
       alias: {
         '@ring': resolve('src/renderer/ring/src'),
         '@settings': resolve('src/renderer/settings/src'),
-        '@shared': resolve('shared')
+        '@shared': resolve('shared'),
+        '@shortcuts': resolve('src/renderer/shortcuts/src'),
+        '@progress': resolve('src/renderer/progress/src')
       }
     },
     plugins: [react()],
@@ -42,7 +46,9 @@ export default defineConfig({
         input: {
           ring: resolve('src/renderer/ring/index.html'),
           settings: resolve('src/renderer/settings/index.html'),
-          appearance: resolve('src/renderer/appearance/index.html')
+          appearance: resolve('src/renderer/appearance/index.html'),
+          shortcuts: resolve('src/renderer/shortcuts/index.html'),
+          progress: resolve('src/renderer/progress/index.html')
         }
       }
     }
