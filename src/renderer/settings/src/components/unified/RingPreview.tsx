@@ -5,6 +5,7 @@ import { useSettings } from '../../context/SettingsContext'
 import { useT } from '../../i18n/I18nContext'
 import { BUILTIN_ICONS } from '@shared/icons'
 import { SVGIcon } from '@shared/SVGIcon'
+import { getSlotButtonColors } from '@shared/colorUtils'
 import type { SlotConfig } from '@shared/config.types'
 
 const VIEWBOX_HALF = 230
@@ -102,6 +103,12 @@ function SlotButton({
   const iconSvg = slot.iconIsCustom ? null : getIconSvg(slot.icon)
   const customSvgString = slot.iconIsCustom ? (svgCache[slot.icon] ?? null) : null
 
+  const colors = getSlotButtonColors(
+    slot,
+    { iconColor: 'var(--ring-icon-color)', bg: 'var(--ring-seg-bg)', bgActive: 'var(--ring-seg-bg-active)' },
+    isSelected
+  )
+
   const hoverG = (
     <g
       style={{
@@ -117,7 +124,7 @@ function SlotButton({
       <circle
         cx={0} cy={0} r={buttonR}
         style={{
-          fill: isSelected ? 'var(--ring-seg-bg-active)' : (slot.bgColor ?? 'var(--ring-seg-bg)'),
+          fill: colors.bg,
           stroke: isSelected ? 'var(--ring-accent)' : 'var(--ring-seg-border)',
           strokeWidth: isSelected ? 2 : 1,
           transition: 'fill 0.15s ease, stroke 0.15s ease',
@@ -137,14 +144,14 @@ function SlotButton({
             <SVGIcon
               svgString={iconSvg}
               size={iconRenderSize}
-              color={slot.iconColor ?? 'var(--ring-icon-color)'}
+              color={colors.iconColor}
               opacity={isSelected ? 1 : 0.7}
             />
           ) : customSvgString ? (
             <SVGIcon
               svgString={customSvgString}
               size={iconRenderSize}
-              color={slot.iconColor ?? 'var(--ring-icon-color)'}
+              color={colors.iconColor}
               opacity={isSelected ? 1 : 0.7}
             />
           ) : slot.iconIsCustom ? (
@@ -300,7 +307,13 @@ export function RingPreview(): JSX.Element {
 
     if (editingFolderIndex !== null) {
       if (editingFolderIndex === slotIndex) {
-        // Toggle: clicking the active folder button returns to primary view
+        if (selectedSubSlotIndex !== null) {
+          // A sub-slot is active — switch to editing the parent folder instead of toggling off
+          setSelectedSubSlotIndex(null)
+          setSelectedSlotIndex(slotIndex)
+          return
+        }
+        // No sub-slot active — toggle: clicking the active folder button returns to primary view
         setEditingFolderIndex(null)
         setSelectedSubSlotIndex(null)
         setSelectedSlotIndex(null)
@@ -406,6 +419,8 @@ export function RingPreview(): JSX.Element {
             const isSelected = slotIndex === selectedSlotIndex
             const isFolder = slot.actions[0]?.type === 'folder'
             const isFolderOpen = editingFolderIndex === slotIndex
+            // Folder button is visually selected only when no sub-slot is active
+            const folderHighlight = isFolderOpen && selectedSubSlotIndex === null
             // In focus mode: dim all primary slots except the active folder
             const dimmed = editingFolderIndex !== null && !isFolderOpen
 
@@ -421,7 +436,7 @@ export function RingPreview(): JSX.Element {
                 showText={showText}
                 foW={foW}
                 foH={foH}
-                isSelected={isSelected || isFolderOpen}
+                isSelected={isSelected || folderHighlight}
                 dimmed={dimmed}
                 onClick={() => handlePrimaryClick(slotIndex)}
                 dropZoneId={`ring-slot-${slotIndex}`}

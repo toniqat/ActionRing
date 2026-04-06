@@ -11,6 +11,7 @@ import {
   IPC_APPEARANCE_UPDATED,
   IPC_SHORTCUTS_OPEN,
   IPC_SHORTCUTS_UPDATED,
+  IPC_SHORTCUTS_COMMITTED,
   IPC_WINDOW_MINIMIZE,
   IPC_WINDOW_MAXIMIZE,
   IPC_APP_ADD,
@@ -67,6 +68,9 @@ contextBridge.exposeInMainWorld('settingsAPI', {
     ipcRenderer.invoke(IPC_SHORTCUTS_OPEN, data),
   onShortcutsUpdated: (callback: (data: ShortcutsSlotData) => void): void => {
     ipcRenderer.on(IPC_SHORTCUTS_UPDATED, (_event, data) => callback(data))
+  },
+  onShortcutsCommitted: (callback: () => void): void => {
+    ipcRenderer.on(IPC_SHORTCUTS_COMMITTED, () => callback())
   },
 
   minimizeWindow: (): void => ipcRenderer.send(IPC_WINDOW_MINIMIZE),

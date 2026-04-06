@@ -22,6 +22,7 @@ declare global {
       onAppearanceUpdated: (cb: (data: AppearanceSlotData) => void) => void
       openShortcutsEditor: (data: ShortcutsSlotData) => Promise<void>
       onShortcutsUpdated: (cb: (data: ShortcutsSlotData) => void) => void
+      onShortcutsCommitted: (cb: () => void) => void
       minimizeWindow: () => void
       maximizeWindow: () => void
       // App management

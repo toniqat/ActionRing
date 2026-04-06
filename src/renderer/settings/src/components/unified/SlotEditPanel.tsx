@@ -2,6 +2,13 @@ import React, { useCallback, useEffect, useRef, useState, Component } from 'reac
 import type { ReactNode, ErrorInfo } from 'react'
 import { createPortal } from 'react-dom'
 import { useDroppable } from '@dnd-kit/core'
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
+import { motion, AnimatePresence } from 'framer-motion'
 import { HexColorPicker } from 'react-colorful'
 import { useSettings } from '../../context/SettingsContext'
 import { BUILTIN_ICONS } from '@shared/icons'
@@ -355,9 +362,83 @@ function makeEmptySubSlot(label: string): SlotConfig {
   }
 }
 
+// ── SortableShortcutCard — wraps ShortcutNodeCard with dnd-kit sortable ──────
+
+function SortableShortcutCard({
+  id,
+  entry,
+  onEdit,
+  onDelete,
+}: {
+  id: string
+  entry: ShortcutEntry
+  onEdit: () => void
+  onDelete: () => void
+}): JSX.Element {
+  const {
+    attributes, listeners, setNodeRef,
+    transform, transition, isDragging,
+  } = useSortable({ id, data: { entry } })
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition: transition ?? undefined,
+        zIndex: isDragging ? 10 : undefined,
+      }}
+    >
+      <ShortcutNodeCard
+        entry={entry}
+        onEdit={() => onEdit()}
+        showDeleteButton
+        onDelete={onDelete}
+        isDragging={isDragging}
+        dragAttributes={attributes as React.HTMLAttributes<HTMLDivElement>}
+        dragListeners={listeners as React.HTMLAttributes<HTMLDivElement>}
+      />
+    </div>
+  )
+}
+
+// ── Insertion placeholder shown when dragging a sidebar item over the list ────
+
+function InsertionPlaceholder(): JSX.Element {
+  return (
+    <motion.div
+      initial={{ height: 0, opacity: 0 }}
+      animate={{ height: 36, opacity: 1 }}
+      exit={{ height: 0, opacity: 0 }}
+      transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+      style={{
+        borderRadius: 7,
+        border: '1px dashed var(--c-accent)',
+        background: 'var(--c-accent-bg)',
+        overflow: 'hidden',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'var(--c-accent)',
+        fontSize: 11,
+      }}
+    >
+      <UIIcon name="download" size={12} />
+    </motion.div>
+  )
+}
+
 // ── SlotEditPanel ─────────────────────────────────────────────────────────────
 
-export function SlotEditPanel({ width = 288 }: { width?: number }): JSX.Element {
+export function SlotEditPanel({
+  width = 288,
+  insertionIndex = null,
+  isDraggingExternal = false,
+}: {
+  width?: number
+  insertionIndex?: number | null
+  isDraggingExternal?: boolean
+}): JSX.Element {
   const t = useT()
   const {
     draft, updateDraft,
@@ -508,12 +589,12 @@ export function SlotEditPanel({ width = 288 }: { width?: number }): JSX.Element 
           >
             {slot.iconIsCustom ? (
               customSvgContent ? (
-                <SVGIcon svgString={customSvgContent} size={18} />
+                <SVGIcon svgString={customSvgContent} size={18} color={slot.iconColor ?? (slot.bgColor ?? '#8b5cf6')} />
               ) : (
                 <img src={`file://${slot.icon}`} style={{ width: 18, height: 18, objectFit: 'contain' }} />
               )
             ) : (
-              <SVGIcon svgString={BUILTIN_ICONS.find((ic) => ic.name === slot.icon)?.svg ?? ''} size={18} />
+              <SVGIcon svgString={BUILTIN_ICONS.find((ic) => ic.name === slot.icon)?.svg ?? ''} size={18} color={slot.iconColor ?? (slot.bgColor ?? '#8b5cf6')} />
             )}
           </button>
 
@@ -681,7 +762,7 @@ export function SlotEditPanel({ width = 288 }: { width?: number }): JSX.Element 
               )}
             </div>
           ) : (
-            /* ── Shortcuts section ── */
+            /* ── Shortcuts section (sortable + drop target) ── */
             <div
               ref={setShortcutDropRef}
               style={{
@@ -689,7 +770,7 @@ export function SlotEditPanel({ width = 288 }: { width?: number }): JSX.Element 
                 flexDirection: 'column',
                 gap: 8,
                 borderRadius: 8,
-                outline: isShortcutDropOver ? '2px solid var(--c-accent)' : '2px solid transparent',
+                outline: (isShortcutDropOver && !isDraggingExternal) ? '2px solid var(--c-accent)' : '2px solid transparent',
                 outlineOffset: 2,
                 transition: 'outline-color 0.12s',
               }}
@@ -698,7 +779,7 @@ export function SlotEditPanel({ width = 288 }: { width?: number }): JSX.Element 
               <span
                 style={{
                   fontSize: 10,
-                  color: isShortcutDropOver ? 'var(--c-accent)' : 'var(--c-text-dim)',
+                  color: (isShortcutDropOver || isDraggingExternal) ? 'var(--c-accent)' : 'var(--c-text-dim)',
                   textTransform: 'uppercase',
                   letterSpacing: '0.06em',
                   transition: 'color 0.12s',
@@ -707,54 +788,55 @@ export function SlotEditPanel({ width = 288 }: { width?: number }): JSX.Element 
                 {t('slot.shortcuts')}
               </span>
 
-              {/* Assigned shortcuts list */}
+              {/* Assigned shortcuts list — sortable for reorder, with insertion placeholder */}
               {assignedShortcuts.length === 0 ? (
                 <div
                   style={{
                     textAlign: 'center',
-                    color: isShortcutDropOver ? 'var(--c-accent)' : 'var(--c-text-dim)',
+                    color: (isShortcutDropOver || isDraggingExternal) ? 'var(--c-accent)' : 'var(--c-text-dim)',
                     fontSize: 12,
                     padding: '16px 10px',
                     borderRadius: 8,
-                    border: `1px dashed ${isShortcutDropOver ? 'var(--c-accent)' : 'var(--c-border)'}`,
-                    background: isShortcutDropOver ? 'var(--c-accent-bg)' : 'transparent',
+                    border: `1px dashed ${(isShortcutDropOver || isDraggingExternal) ? 'var(--c-accent)' : 'var(--c-border)'}`,
+                    background: (isShortcutDropOver || isDraggingExternal) ? 'var(--c-accent-bg)' : 'transparent',
                     transition: 'all 0.12s',
                   }}
                 >
-                  {isShortcutDropOver ? (
+                  {(isShortcutDropOver || isDraggingExternal) ? (
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                       <UIIcon name="download" size={12} /> Drop to assign
                     </span>
                   ) : t('slot.noActions')}
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {assignedShortcuts.map((entry, i) => (
-                    <ShortcutNodeCard
-                      key={entry.id}
-                      entry={entry}
-                      onEdit={() => openShortcutEditor(entry)}
-                      showDeleteButton
-                      onDelete={() => removeShortcut(i)}
-                    />
-                  ))}
-                  {/* Drop-to-add hint shown while dragging over */}
-                  {isShortcutDropOver && (
-                    <div style={{
-                      textAlign: 'center',
-                      color: 'var(--c-accent)',
-                      fontSize: 12,
-                      padding: '8px 10px',
-                      borderRadius: 8,
-                      border: '1px dashed var(--c-accent)',
-                      background: 'var(--c-accent-bg)',
-                    }}>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                        <UIIcon name="download" size={12} /> Drop to add
-                      </span>
-                    </div>
-                  )}
-                </div>
+                <SortableContext
+                  items={assignedShortcuts.map((_, i) => `assigned-${i}`)}
+                  strategy={verticalListSortingStrategy}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {assignedShortcuts.map((entry, i) => (
+                      <React.Fragment key={`${entry.id}-${i}`}>
+                        <AnimatePresence>
+                          {isDraggingExternal && insertionIndex === i && (
+                            <InsertionPlaceholder key="insert-placeholder" />
+                          )}
+                        </AnimatePresence>
+                        <SortableShortcutCard
+                          id={`assigned-${i}`}
+                          entry={entry}
+                          onEdit={() => openShortcutEditor(entry)}
+                          onDelete={() => removeShortcut(i)}
+                        />
+                      </React.Fragment>
+                    ))}
+                    {/* Placeholder at the end of list */}
+                    <AnimatePresence>
+                      {isDraggingExternal && insertionIndex === assignedShortcuts.length && (
+                        <InsertionPlaceholder key="insert-placeholder-end" />
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </SortableContext>
               )}
             </div>
           )}

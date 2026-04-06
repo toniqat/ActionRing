@@ -1,4 +1,5 @@
 import { SegmentIcon } from './SegmentIcon'
+import { getSlotButtonColors } from '@shared/colorUtils'
 import type { SlotConfig } from '@shared/config.types'
 
 const DEFAULT_BUTTON_RADIUS = 32
@@ -34,6 +35,12 @@ export function RingSegment({
   const by = Math.sin(angle) * radius
   const scale = isHighlighted ? 1.12 : 1
 
+  const colors = getSlotButtonColors(
+    slot,
+    { iconColor: 'var(--ring-icon-color)', bg: 'var(--ring-seg-bg)', bgActive: 'var(--ring-seg-bg-active)' },
+    isHighlighted
+  )
+
   return (
     <g
       transform={`translate(${bx}, ${by}) scale(${scale})`}
@@ -46,7 +53,7 @@ export function RingSegment({
         r={BUTTON_RADIUS}
         opacity={0.93}
         style={{
-          fill: isHighlighted ? 'var(--ring-seg-bg-active)' : (slot.bgColor ?? 'var(--ring-seg-bg)'),
+          fill: colors.bg,
           stroke: isFolderOpen ? 'var(--ring-accent, #6060ff)' : isHighlighted ? 'var(--ring-seg-border-active)' : 'var(--ring-seg-border)',
           strokeWidth: isFolderOpen ? 2 : isHighlighted ? 1.5 : 1,
           transition: 'fill 0.1s ease, stroke 0.1s ease',
@@ -88,7 +95,7 @@ export function RingSegment({
                 gap: 3,
               }}
             >
-              <SegmentIcon icon={slot.icon} iconIsCustom={slot.iconIsCustom} size={iconSize} color={slot.iconColor} />
+              <SegmentIcon icon={slot.icon} iconIsCustom={slot.iconIsCustom} size={iconSize} color={colors.iconColor} />
               {showText && (
                 <span
                   style={{

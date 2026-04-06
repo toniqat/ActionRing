@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState } from 'react'
 import { RingSegment } from './RingSegment'
 import { SegmentIcon } from './SegmentIcon'
+import { getSlotButtonColors } from '@shared/colorUtils'
 import { useSegmentHitTest } from '../hooks/useSegmentHitTest'
 import type { SlotConfig } from '@shared/config.types'
 
@@ -254,6 +255,12 @@ export function RingCanvas({
               const foW = Math.round(buttonSize * 0.875)
               const foH = showText ? iconSize + 3 + fontSize + 4 : iconSize + 4
 
+              const subColors = getSlotButtonColors(
+                sub,
+                { iconColor: 'var(--ring-icon-color)', bg: 'var(--ring-seg-bg)', bgActive: 'var(--ring-seg-bg-active)' },
+                isHighlighted
+              )
+
               return (
                 <g key={sub.id} transform={`translate(${pos.x}, ${pos.y})`}>
                 <g
@@ -272,7 +279,7 @@ export function RingCanvas({
                     r={BUTTON_RADIUS}
                     opacity={0.93}
                     style={{
-                      fill: isHighlighted ? 'var(--ring-seg-bg-active)' : (sub.bgColor ?? 'var(--ring-seg-bg)'),
+                      fill: subColors.bg,
                       stroke: isHighlighted ? 'var(--ring-seg-border-active)' : 'var(--ring-seg-border)',
                       strokeWidth: isHighlighted ? 1.5 : 1,
                       transition: 'fill 0.1s ease, stroke 0.1s ease',
@@ -307,7 +314,7 @@ export function RingCanvas({
                         gap: 3,
                       }}
                     >
-                      <SegmentIcon icon={sub.icon} iconIsCustom={sub.iconIsCustom} size={iconSize} color={sub.iconColor} />
+                      <SegmentIcon icon={sub.icon} iconIsCustom={sub.iconIsCustom} size={iconSize} color={subColors.iconColor} />
                       {showText && (
                         <span
                           style={{

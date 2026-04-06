@@ -6,6 +6,7 @@ import { HexColorPicker } from 'react-colorful'
 import { BUILTIN_ICONS } from '@shared/icons'
 import { SVGIcon } from '@shared/SVGIcon'
 import { UIIcon } from '@shared/UIIcon'
+import { getSlotButtonColors } from '@shared/colorUtils'
 import type { SlotConfig } from '@shared/config.types'
 import type { CustomIconEntry, ResourceIconEntry } from '@shared/ipc.types'
 
@@ -535,8 +536,11 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
 
   // ── Preview data ──────────────────────────────────────────────────────────
 
-  const previewBg = slot.bgColor ?? undefined
-  const previewIconColor = slot.iconColor ?? undefined
+  const previewColors = getSlotButtonColors(
+    slot,
+    { iconColor: 'var(--ring-icon-color)', bg: 'var(--ring-seg-bg)', bgActive: 'var(--ring-seg-bg-active)' },
+    false
+  )
 
   // Resolve inline SVG for preview: builtin → BUILTIN_ICONS, resource → svgContent, custom SVG → cache
   const previewSvgString: string | null = (() => {
@@ -608,7 +612,7 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
             <div
               style={{
                 width: 64, height: 64, borderRadius: '50%',
-                background: previewBg ?? 'var(--ring-seg-bg)',
+                background: previewColors.bg,
                 border: '1.5px solid var(--ring-seg-border)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 flexShrink: 0,
@@ -619,7 +623,7 @@ export function AppearanceEditor({ slot, onUpdate, defaultSizes, onSizesChange, 
                 <SVGIcon
                   svgString={previewSvgString}
                   size={26}
-                  color={previewIconColor ?? 'var(--ring-icon-color)'}
+                  color={previewColors.iconColor}
                 />
               ) : isNonSvgCustom ? (
                 <img

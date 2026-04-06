@@ -120,8 +120,32 @@ const branchPriorityCollision: CollisionDetection = (args) => {
   }
 
   if (isNestedDrag) {
-    // When dragging a nested item: prioritise other nested items for reorder,
-    // then branch zones for cross-branch moves, then main list for extraction
+    // When dragging a nested item, first check if the pointer is over a zone
+    // (delete-zone / workspace).  If so, that takes priority so nested items
+    // can be extracted or deleted.
+    if (zoneContainers.length > 0) {
+      const zoneHits = rectIntersection({ ...args, droppableContainers: zoneContainers })
+      if (zoneHits.length > 0) {
+        // Pointer is inside a zone — but only honour it when it is NOT also
+        // inside a branch zone (branches are more specific).
+        const branchHits = branchContainers.length > 0
+          ? rectIntersection({ ...args, droppableContainers: branchContainers })
+          : []
+        if (branchHits.length === 0) return zoneHits
+      }
+    }
+    // Then check sortable top-level nodes (for insertion between them)
+    if (sortableContainers.length > 0) {
+      const sortHits = closestCenter({ ...args, droppableContainers: sortableContainers })
+      if (sortHits.length > 0) {
+        // Only honour sortable hits when the pointer is outside all branch zones
+        const branchHits = branchContainers.length > 0
+          ? rectIntersection({ ...args, droppableContainers: branchContainers })
+          : []
+        if (branchHits.length === 0) return sortHits
+      }
+    }
+    // Then nested items for reorder within/across branches
     if (nestedContainers.length > 0) {
       const hits = closestCenter({ ...args, droppableContainers: nestedContainers })
       if (hits.length > 0) return hits
@@ -134,8 +158,15 @@ const branchPriorityCollision: CollisionDetection = (args) => {
     return closestCenter({ ...args, droppableContainers: remaining.length > 0 ? remaining : args.droppableContainers })
   }
 
-  // Non-nested drag: prioritise branch zones, then individual sortable nodes,
-  // then fall back to large zone containers (workspace / delete-zone)
+  // Non-nested drag: check if pointer is inside the delete-zone first.
+  // Without this, closestCenter on sortable nodes always wins even when the
+  // pointer is clearly over the delete-zone, preventing node deletion.
+  const deleteZone = zoneContainers.filter(c => c.id === 'delete-zone')
+  if (deleteZone.length > 0) {
+    const deleteHits = rectIntersection({ ...args, droppableContainers: deleteZone })
+    if (deleteHits.length > 0) return deleteHits
+  }
+  // Then prioritise branch zones, then individual sortable nodes
   if (branchContainers.length > 0) {
     const branchHits = rectIntersection({ ...args, droppableContainers: branchContainers })
     if (branchHits.length > 0) return branchHits
@@ -144,7 +175,7 @@ const branchPriorityCollision: CollisionDetection = (args) => {
     const sortHits = closestCenter({ ...args, droppableContainers: sortableContainers })
     if (sortHits.length > 0) return sortHits
   }
-  // Fall back to workspace / delete-zone
+  // Fall back to remaining zones (workspace)
   if (zoneContainers.length > 0) {
     return rectIntersection({ ...args, droppableContainers: zoneContainers })
   }
@@ -227,26 +258,6 @@ function generateNodeId(): string {
 interface ActionNode {
   _id: string
   action: ActionConfig
-}
-
-// ── GhostNode — displacement preview for library-item drags ───────────────────
-
-function GhostNode({ type, nodeStyle }: { type: string; nodeStyle: NodeStyle }): JSX.Element {
-  const cfg = nodeStyle[type] ?? nodeStyle.shell
-  return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 8,
-      padding: '8px 12px', borderRadius: 8,
-      background: `${cfg.color}0a`,
-      border: `1px dashed ${cfg.color}66`,
-      borderLeft: `3px solid ${cfg.color}88`,
-      marginBottom: 6, opacity: 0.65,
-      pointerEvents: 'none',
-    }}>
-      <span style={{ flexShrink: 0, color: cfg.color }}><UIIcon name={cfg.icon} size={14} /></span>
-      <span style={{ fontSize: 11, fontWeight: 700, color: `${cfg.color}bb`, flexShrink: 0 }}>{cfg.label}</span>
-    </div>
-  )
 }
 
 // ── ShortcutRecorder ───────────────────────────────────────────────────────────
@@ -2129,21 +2140,26 @@ function WorkspaceDropZone({ children, style, isLibDrag, hasNodes }: { children:
 
 // ── DeleteDropZone — palette wrapper that acts as a deletion target ────────────
 
-function DeleteDropZone({ children, style, active }: { children: ReactNode; style?: React.CSSProperties; active: boolean }): JSX.Element {
+function DeleteDropZone({ children, style, active, mode }: { children: ReactNode; style?: React.CSSProperties; active: boolean; mode: 'delete' | 'cancel' }): JSX.Element {
   const { setNodeRef, isOver } = useDroppable({ id: 'delete-zone' })
-  const showDelete = active
+  const isDelete = mode === 'delete'
+  const hoverColor = isDelete ? '#ef4444' : 'var(--c-text)'
   return (
     <div ref={setNodeRef} style={{ ...style, position: 'relative' }}>
-      {/* Hide action list items entirely when delete mode is active */}
-      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, visibility: showDelete ? 'hidden' : 'visible' }}>
+      {/* Hide action list items entirely when drag is active */}
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0, visibility: active ? 'hidden' : 'visible' }}>
         {children}
       </div>
-      {/* Delete overlay — sole visible element when dragging a workspace node */}
-      {showDelete && (
+      {/* Overlay — delete zone for workspace drags, cancel zone for library drags */}
+      {active && (
         <div style={{
           position: 'absolute', inset: 0,
-          background: isOver ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.04)',
-          border: isOver ? '2px dashed #ef4444' : '2px dashed transparent',
+          background: isOver
+            ? (isDelete ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.04)')
+            : (isDelete ? 'rgba(239,68,68,0.04)' : 'transparent'),
+          border: isOver
+            ? `2px dashed ${isDelete ? '#ef4444' : 'var(--c-text-dim)'}`
+            : '2px dashed transparent',
           borderRadius: 0,
           display: 'flex', flexDirection: 'column',
           alignItems: 'center', justifyContent: 'center',
@@ -2152,13 +2168,16 @@ function DeleteDropZone({ children, style, active }: { children: ReactNode; styl
           transition: 'background 0.15s, border-color 0.15s',
           zIndex: 10,
         }}>
-          <UIIcon name="delete" size={isOver ? 32 : 24} />
+          <UIIcon name={isDelete ? 'delete' : 'close'} size={isOver ? 32 : 24} />
           <span style={{
             fontSize: 12, fontWeight: 700,
-            color: isOver ? '#ef4444' : 'var(--c-text-dim)',
+            color: isOver ? hoverColor : 'var(--c-text-dim)',
             transition: 'color 0.15s, font-size 0.15s',
           }}>
-            {isOver ? 'Release to delete' : 'Drop here to delete'}
+            {isDelete
+              ? (isOver ? 'Release to delete' : 'Drop here to delete')
+              : (isOver ? 'Release to cancel' : 'Drop here to cancel')
+            }
           </span>
         </div>
       )}
@@ -2243,11 +2262,12 @@ interface IconColorPopoverProps {
   onSelectBuiltinIcon: (iconName: string) => void
   onSelectBgColor: (color: string | undefined) => void
   onClose: () => void
+  anchorRef?: React.RefObject<HTMLElement>
 }
 
 function IconColorPopover({
   pos, slot, resourceIcons, recentColors,
-  onSelectIcon, onSelectBuiltinIcon, onSelectBgColor, onClose,
+  onSelectIcon, onSelectBuiltinIcon, onSelectBgColor, onClose, anchorRef,
 }: IconColorPopoverProps): JSX.Element {
   const popoverRef = useRef<HTMLDivElement>(null)
   const [tab, setTab] = useState<'icon' | 'color'>('icon')
@@ -2258,13 +2278,16 @@ function IconColorPopover({
   // Close on outside click (deferred to avoid closing immediately on open)
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+      if (
+        popoverRef.current && !popoverRef.current.contains(e.target as Node) &&
+        !(anchorRef?.current && anchorRef.current.contains(e.target as Node))
+      ) {
         onClose()
       }
     }
     const timer = setTimeout(() => document.addEventListener('mousedown', handler), 0)
     return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler) }
-  }, [onClose])
+  }, [onClose, anchorRef])
 
   const POPUP_WIDTH = 268
   const PADDING = 12
@@ -2553,6 +2576,9 @@ function ShortcutsEditorInner(): JSX.Element {
   const [branchDrop, setBranchDrop] = useState<{ nodeId: string; branch: 'then' | 'else' | 'loop' | 'sequence' } | null>(null)
   const branchDropRef = useRef<{ nodeId: string; branch: 'then' | 'else' | 'loop' | 'sequence' } | null>(null)
   useEffect(() => { branchDropRef.current = branchDrop }, [branchDrop])
+  const preDragNodesRef = useRef<ActionNode[] | null>(null)
+  const libInsertedIdRef = useRef<string | null>(null)
+  const libActionRef = useRef<ActionConfig | null>(null)
 
   const isLibDrag = activeDragId?.startsWith('lib-') ?? false
   const activeLibType = isLibDrag ? (activeDragId!.startsWith('lib-run-shortcut-') ? 'run-shortcut' : activeDragId!.replace('lib-', '')) : null
@@ -2591,6 +2617,8 @@ function ShortcutsEditorInner(): JSX.Element {
       return
     }
     if (!slotBaseRef.current) return
+    // Skip relay while a library drag is in progress (node not yet committed)
+    if (preDragNodesRef.current) return
     const updatedSlot: SlotConfig = {
       ...slotBaseRef.current,
       label: slotLabel,
@@ -2672,32 +2700,6 @@ function ShortcutsEditorInner(): JSX.Element {
 
   // ── Node operations ────────────────────────────────────────────────────────
 
-  const insertNodeOfType = useCallback((type: string, at: number, extraData?: Partial<RunShortcutAction>) => {
-    let action: ActionConfig
-    switch (type) {
-      case 'launch':        action = { type: 'launch', target: '' }; break
-      case 'shortcut':      action = { type: 'shortcut', keys: '' }; break
-      case 'shell':         action = { type: 'shell', command: '' }; break
-      case 'system':        action = { type: 'system', action: 'volume-up' as SystemActionId }; break
-      case 'if-else':       action = { type: 'if-else', condition: '', matchLogic: 'all', criteria: [{ variable: '', operator: 'eq' as ConditionOperator, value: '' }], thenActions: [], elseActions: [] }; break
-      case 'loop':          action = { type: 'loop', mode: 'repeat' as LoopMode, count: 3, body: [] }; break
-      case 'wait':          action = { type: 'wait', ms: 500 }; break
-      case 'set-var':       action = { type: 'set-var', name: '', value: '', scope: 'local' }; break
-      case 'toast':         action = { type: 'toast', message: '' }; break
-      case 'run-shortcut':  action = { type: 'run-shortcut', shortcutId: extraData?.shortcutId ?? '' }; break
-      case 'escape':        action = { type: 'escape' }; break
-      case 'stop':          action = { type: 'stop' }; break
-      case 'calculate':     action = { type: 'calculate', operation: 'add' as CalcOperation, operandA: '', operandB: '', resultVar: 'result', scope: 'local' }; break
-      case 'comment':       action = { type: 'comment', text: '' }; break
-      case 'sequence':      action = { type: 'sequence', name: '', body: [], showProgress: true }; break
-      default:              action = { type: 'system', action: 'volume-up' as SystemActionId }
-    }
-    const newNode: ActionNode = { _id: generateNodeId(), action }
-    const updated = [...nodes]
-    updated.splice(at, 0, newNode)
-    commitNodes(updated)
-  }, [nodes, commitNodes])
-
   const deleteNode = useCallback((id: string) => {
     commitNodes(nodes.filter((n) => n._id !== id))
   }, [nodes, commitNodes])
@@ -2709,7 +2711,19 @@ function ShortcutsEditorInner(): JSX.Element {
   // ── DnD handlers ───────────────────────────────────────────────────────────
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
-    setActiveDragId(event.active.id as string)
+    const id = event.active.id as string
+    setActiveDragId(id)
+
+    // Library drag: save pre-drag state and prepare the action, but do NOT
+    // insert into nodes yet — insertion happens on first workspace dragOver.
+    if (id.startsWith('lib-')) {
+      const dragData = event.active.data.current as { type: string; shortcutId?: string } | undefined
+      const type = dragData?.type ?? (id.startsWith('lib-run-shortcut-') ? 'run-shortcut' : id.replace('lib-', ''))
+      const action = makeDefaultAction(type, dragData?.shortcutId ? { shortcutId: dragData.shortcutId } : undefined)
+      preDragNodesRef.current = nodesRef.current
+      libInsertedIdRef.current = null
+      libActionRef.current = action
+    }
   }, [])
 
   const handleDragOver = useCallback((event: DragOverEvent) => {
@@ -2720,10 +2734,56 @@ function ShortcutsEditorInner(): JSX.Element {
     const currentNodes = nodesRef.current
     const overId = over?.id?.toString() ?? ''
 
-    // Nested item drags are handled entirely within their SortableContext;
-    // clear main-list state so it doesn't interfere
+    // Nested item drags: track workspace/delete-zone/branch targets so that
+    // nested items can be extracted, deleted, or moved across branches.
     if (isNested) {
+      if (overId.startsWith('branch:')) {
+        const firstColon = overId.indexOf(':', 7)
+        const nodeId = overId.slice(7, firstColon)
+        const branch = overId.slice(firstColon + 1) as 'then' | 'else' | 'loop' | 'sequence'
+        if (nodeId && (branch === 'then' || branch === 'else' || branch === 'loop' || branch === 'sequence')) {
+          setBranchDrop({ nodeId, branch })
+          setDropIndex(null)
+          return
+        }
+      }
+      // When over workspace, delete-zone, or sortable top-level nodes, clear branch target
       setBranchDrop(null)
+      // Compute insertion index when over workspace or sortable nodes for extraction
+      if (overId === 'workspace' || overId === 'delete-zone') {
+        if (overId === 'workspace') {
+          if (currentNodes.length === 0) {
+            setDropIndex(0)
+          } else {
+            const translated = active.rect.current.translated
+            if (translated && over) {
+              const dragMidY = translated.top + translated.height / 2
+              const wsMidY = over.rect.top + over.rect.height / 2
+              setDropIndex(dragMidY < wsMidY ? 0 : currentNodes.length)
+            } else {
+              setDropIndex(currentNodes.length)
+            }
+          }
+        } else {
+          setDropIndex(null)
+        }
+        return
+      }
+      // Over a sortable top-level node — compute insertion position
+      const overNodeIdx = currentNodes.findIndex((n) => n._id === overId)
+      if (overNodeIdx !== -1) {
+        const overRect = over!.rect
+        const translated = active.rect.current.translated
+        if (translated) {
+          const dragMidY = translated.top + translated.height / 2
+          const overMidY = overRect.top + overRect.height / 2
+          setDropIndex(dragMidY < overMidY ? overNodeIdx : overNodeIdx + 1)
+        } else {
+          setDropIndex(overNodeIdx)
+        }
+        return
+      }
+      // Over nested items in same/other branch — let SortableContext handle visuals
       setDropIndex(null)
       return
     }
@@ -2743,61 +2803,116 @@ function ShortcutsEditorInner(): JSX.Element {
         }
         setBranchDrop({ nodeId, branch })
         setDropIndex(null)
+        // Remove the lib-inserted node from top-level while hovering a branch
+        if (isLib && libInsertedIdRef.current) {
+          const insertedId = libInsertedIdRef.current
+          if (currentNodes.some((n) => n._id === insertedId)) {
+            setNodes(currentNodes.filter((n) => n._id !== insertedId))
+          }
+        }
         return
       }
     }
 
     setBranchDrop(null)
 
-    // For existing node drags, let dnd-kit's SortableContext handle reordering visuals
-    // but still clear dropIndex/branchDrop so they don't interfere
-    if (!isLib) {
-      setDropIndex(null)
-      return
-    }
+    // For library drags, insert a real node into the workspace on first entry,
+    // then arrayMove it on subsequent overs — giving identical UX to existing-node drags.
+    if (isLib) {
+      if (overId === 'delete-zone') {
+        // Remove the inserted node while hovering delete zone
+        if (libInsertedIdRef.current) {
+          const insertedId = libInsertedIdRef.current
+          if (currentNodes.some((n) => n._id === insertedId)) {
+            setNodes(currentNodes.filter((n) => n._id !== insertedId))
+          }
+        }
+        setDropIndex(null)
+        return
+      }
 
-    // Library drag — compute insertion index
-    if (!over || overId === 'workspace') {
-      if (currentNodes.length === 0) {
-        setDropIndex(0)
+      const action = libActionRef.current
+      if (!action) return
+
+      // Compute target index based on pointer vs over-element position
+      const computeTargetIndex = (): number => {
+        const insertedId = libInsertedIdRef.current
+        const nodesWithout = insertedId ? currentNodes.filter((n) => n._id !== insertedId) : currentNodes
+        if (overId === 'workspace') {
+          if (nodesWithout.length === 0) return 0
+          const translated = active.rect.current.translated
+          if (translated && over) {
+            const dragMidY = translated.top + translated.height / 2
+            const wsMidY = over.rect.top + over.rect.height / 2
+            return dragMidY < wsMidY ? 0 : nodesWithout.length
+          }
+          return nodesWithout.length
+        }
+        // Over a sortable top-level node
+        const overIdx = nodesWithout.findIndex((n) => n._id === overId)
+        if (overIdx !== -1) {
+          const translated = active.rect.current.translated
+          if (translated) {
+            const dragMidY = translated.top + translated.height / 2
+            const overMidY = over!.rect.top + over!.rect.height / 2
+            return dragMidY < overMidY ? overIdx : overIdx + 1
+          }
+          return overIdx
+        }
+        return nodesWithout.length
+      }
+
+      const targetIdx = computeTargetIndex()
+
+      if (!libInsertedIdRef.current) {
+        // First entry into workspace — insert a real node with unique ID
+        const newId = generateNodeId()
+        libInsertedIdRef.current = newId
+        const nodesWithout = currentNodes
+        const newNodes = [...nodesWithout]
+        newNodes.splice(targetIdx, 0, { _id: newId, action })
+        setNodes(newNodes)
       } else {
-        // Cursor is over the workspace background (above first / below last item).
-        // Use the dragged element's translated position relative to the workspace
-        // midpoint to decide insert-at-top (0) vs append-at-end (length).
-        const translated = active.rect.current.translated
-        if (translated && over) {
-          const dragMidY = translated.top + translated.height / 2
-          const wsMidY = over.rect.top + over.rect.height / 2
-          setDropIndex(dragMidY < wsMidY ? 0 : currentNodes.length)
-        } else if (translated) {
-          // over is null (dragged outside the workspace) — append at end
-          setDropIndex(currentNodes.length)
+        // Already inserted — move it to the new position
+        const insertedId = libInsertedIdRef.current
+        const currentIdx = currentNodes.findIndex((n) => n._id === insertedId)
+        if (currentIdx === -1) {
+          // Re-insert if it was removed (e.g. returned from branch/delete hover)
+          const newNodes = [...currentNodes]
+          newNodes.splice(targetIdx, 0, { _id: insertedId, action })
+          setNodes(newNodes)
+        } else {
+          // Compute move target within the full array (including the inserted node)
+          const nodesWithout = currentNodes.filter((n) => n._id !== insertedId)
+          const clampedIdx = Math.min(targetIdx, nodesWithout.length)
+          // Re-insert at the right position
+          const newNodes = [...nodesWithout]
+          newNodes.splice(clampedIdx, 0, currentNodes[currentIdx])
+          // Only update if position actually changed
+          if (currentIdx !== newNodes.findIndex((n) => n._id === insertedId)) {
+            setNodes(newNodes)
+          }
         }
       }
-      return
-    }
-
-    const overNodeIdx = currentNodes.findIndex((n) => n._id === over.id)
-    if (overNodeIdx === -1) {
       setDropIndex(null)
       return
     }
 
-    const overRect = over.rect
-    const translated = active.rect.current.translated
-    if (translated) {
-      const dragMidY = translated.top + translated.height / 2
-      const overMidY = overRect.top + overRect.height / 2
-      setDropIndex(dragMidY < overMidY ? overNodeIdx : overNodeIdx + 1)
-    } else {
-      setDropIndex(overNodeIdx)
-    }
+    // For existing node drags, SortableContext handles reordering visuals
+    setDropIndex(null)
   }, [])
 
   const handleDragCancel = useCallback(() => {
     setActiveDragId(null)
     setDropIndex(null)
     setBranchDrop(null)
+    // Revert to pre-drag state if lib drag was in progress
+    if (preDragNodesRef.current) {
+      setNodes(preDragNodesRef.current)
+      preDragNodesRef.current = null
+    }
+    libInsertedIdRef.current = null
+    libActionRef.current = null
   }, [])
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
@@ -2806,68 +2921,201 @@ function ShortcutsEditorInner(): JSX.Element {
 
     setActiveDragId(null)
 
-    // ── Nested item drag — reorder within branch via attached callbacks ──
+    // ── Nested item drag — reorder, extract, delete, or cross-branch move ──
     if (id.startsWith('nested:')) {
+      const branchTarget = branchDropRef.current
+      const idx = dropIndexRef.current
       setBranchDrop(null)
       setDropIndex(null)
-      if (!over || active.id === over.id) return
-      const overId = over.id.toString()
 
-      if (overId.startsWith('nested:')) {
-        // Reorder within the same branch (or move between branches)
-        const fromData = active.data.current as { branchId: string; index: number; actions: ActionConfig[]; onReorder: (a: ActionConfig[]) => void } | undefined
-        const toData   = over.data.current   as { branchId: string; index: number; actions: ActionConfig[]; onReorder: (a: ActionConfig[]) => void } | undefined
+      const fromData = active.data.current as { branchId: string; index: number; actions: ActionConfig[]; onReorder: (a: ActionConfig[]) => void } | undefined
+      if (!fromData) return
+
+      const draggedAction = fromData.actions[fromData.index]
+
+      // Parse source branchId (format: "branch:{nodeId}:{then|else|loop|sequence}")
+      const srcParts = fromData.branchId.match(/^branch:(.+):(then|else|loop|sequence)$/)
+      const srcNodeId = srcParts?.[1]
+      const srcBranch = srcParts?.[2] as 'then' | 'else' | 'loop' | 'sequence' | undefined
+
+      // Helper: produce a new nodes array with the dragged item removed from its source branch
+      const removeDraggedFromNodes = (nodesList: ActionNode[]): ActionNode[] => {
+        if (!srcNodeId || !srcBranch) return nodesList
+        return nodesList.map((n) => {
+          if (n._id !== srcNodeId) return n
+          const a = n.action
+          if (a.type === 'if-else' && (srcBranch === 'then' || srcBranch === 'else')) {
+            const ifElse = a as IfElseAction
+            return { ...n, action: srcBranch === 'then'
+              ? { ...ifElse, thenActions: ifElse.thenActions.filter((_, i) => i !== fromData.index) }
+              : { ...ifElse, elseActions: ifElse.elseActions.filter((_, i) => i !== fromData.index) }
+            }
+          }
+          if (a.type === 'loop' && srcBranch === 'loop') {
+            const loopAct = a as LoopAction
+            return { ...n, action: { ...loopAct, body: loopAct.body.filter((_, i) => i !== fromData.index) } }
+          }
+          if (a.type === 'sequence' && srcBranch === 'sequence') {
+            const seqAct = a as SequenceAction
+            return { ...n, action: { ...seqAct, body: seqAct.body.filter((_, i) => i !== fromData.index) } }
+          }
+          return n
+        })
+      }
+
+      // Drop on another nested item — same-branch reorder handled via callbacks
+      if (over && over.id.toString().startsWith('nested:')) {
+        if (active.id === over.id) return
+        const toData = over.data.current as { branchId: string; index: number; actions: ActionConfig[]; onReorder: (a: ActionConfig[]) => void } | undefined
         if (fromData && toData && fromData.branchId === toData.branchId) {
           fromData.onReorder(arrayMove([...fromData.actions], fromData.index, toData.index))
+          return
+        }
+        // Cross-branch reorder via nested items — use commitNodes for atomicity
+        if (fromData && toData && fromData.branchId !== toData.branchId) {
+          let updated = removeDraggedFromNodes(nodesRef.current)
+          // Now add to target branch
+          const tgtParts = toData.branchId.match(/^branch:(.+):(then|else|loop|sequence)$/)
+          const tgtNodeId = tgtParts?.[1]
+          const tgtBranch = tgtParts?.[2] as 'then' | 'else' | 'loop' | 'sequence' | undefined
+          if (tgtNodeId && tgtBranch) {
+            updated = updated.map((n) => {
+              if (n._id !== tgtNodeId) return n
+              const a = n.action
+              if (a.type === 'if-else' && (tgtBranch === 'then' || tgtBranch === 'else')) {
+                const ifElse = a as IfElseAction
+                const arr = tgtBranch === 'then' ? [...ifElse.thenActions] : [...ifElse.elseActions]
+                arr.splice(toData.index, 0, draggedAction)
+                return { ...n, action: tgtBranch === 'then'
+                  ? { ...ifElse, thenActions: arr }
+                  : { ...ifElse, elseActions: arr }
+                }
+              }
+              if (a.type === 'loop' && tgtBranch === 'loop') {
+                const loopAct = a as LoopAction
+                const arr = [...loopAct.body]; arr.splice(toData.index, 0, draggedAction)
+                return { ...n, action: { ...loopAct, body: arr } }
+              }
+              if (a.type === 'sequence' && tgtBranch === 'sequence') {
+                const seqAct = a as SequenceAction
+                const arr = [...seqAct.body]; arr.splice(toData.index, 0, draggedAction)
+                return { ...n, action: { ...seqAct, body: arr } }
+              }
+              return n
+            })
+          }
+          commitNodes(updated)
+          return
         }
       }
-      return
-    }
 
-    if (id.startsWith('lib-')) {
-      const dragData = active.data.current as { type: string; shortcutId?: string } | undefined
-      const type = dragData?.type ?? id.replace('lib-', '')
-      const currentNodes = nodesRef.current
+      // Drop on delete-zone or outside workspace — delete the nested node
+      if (!over || over.id === 'delete-zone') {
+        commitNodes(removeDraggedFromNodes(nodesRef.current))
+        return
+      }
 
-      // Check for branch drop first
-      const branchTarget = branchDropRef.current
-      setBranchDrop(null)
-      setDropIndex(null)
+      const overId = over.id.toString()
 
-      if (branchTarget && over) {
+      // Drop on a branch zone — insert into that branch
+      if (branchTarget) {
         const { nodeId, branch } = branchTarget
-        const nodeIdx = currentNodes.findIndex((n) => n._id === nodeId)
-        if (nodeIdx !== -1) {
-          const nodeAction = currentNodes[nodeIdx].action
-          const newAction = makeDefaultAction(type, dragData?.shortcutId ? { shortcutId: dragData.shortcutId } : undefined)
-          if (nodeAction.type === 'if-else' && (branch === 'then' || branch === 'else')) {
-            const ifElse = nodeAction as IfElseAction
+        let updated = removeDraggedFromNodes(nodesRef.current)
+        const targetNodeIdx = updated.findIndex((n) => n._id === nodeId)
+        if (targetNodeIdx !== -1) {
+          const targetAction = updated[targetNodeIdx].action
+          if (targetAction.type === 'if-else' && (branch === 'then' || branch === 'else')) {
+            const ifElse = targetAction as IfElseAction
             const updatedAction: IfElseAction = branch === 'then'
-              ? { ...ifElse, thenActions: [...ifElse.thenActions, newAction] }
-              : { ...ifElse, elseActions: [...ifElse.elseActions, newAction] }
-            commitNodes(currentNodes.map((n, i) => i === nodeIdx ? { ...n, action: updatedAction } : n))
-          } else if (nodeAction.type === 'loop' && branch === 'loop') {
-            const loopAct = nodeAction as LoopAction
-            const updatedAction: LoopAction = { ...loopAct, body: [...loopAct.body, newAction] }
-            commitNodes(currentNodes.map((n, i) => i === nodeIdx ? { ...n, action: updatedAction } : n))
-          } else if (nodeAction.type === 'sequence' && branch === 'sequence') {
-            const seqAct = nodeAction as SequenceAction
-            const updatedAction: SequenceAction = { ...seqAct, body: [...seqAct.body, newAction] }
-            commitNodes(currentNodes.map((n, i) => i === nodeIdx ? { ...n, action: updatedAction } : n))
+              ? { ...ifElse, thenActions: [...ifElse.thenActions, draggedAction] }
+              : { ...ifElse, elseActions: [...ifElse.elseActions, draggedAction] }
+            updated = updated.map((n, i) => i === targetNodeIdx ? { ...n, action: updatedAction } : n)
+          } else if (targetAction.type === 'loop' && branch === 'loop') {
+            const loopAct = targetAction as LoopAction
+            updated = updated.map((n, i) => i === targetNodeIdx ? { ...n, action: { ...loopAct, body: [...loopAct.body, draggedAction] } } : n)
+          } else if (targetAction.type === 'sequence' && branch === 'sequence') {
+            const seqAct = targetAction as SequenceAction
+            updated = updated.map((n, i) => i === targetNodeIdx ? { ...n, action: { ...seqAct, body: [...seqAct.body, draggedAction] } } : n)
           }
+          commitNodes(updated)
         }
         return
       }
 
-      // Allow drop on: existing nodes (between them), empty workspace, or
-      // workspace with a computed dropIndex (top/bottom edge insertion)
-      const idx = dropIndexRef.current
-      const isValidDrop = over !== null && idx !== null && (
-        over.id === 'workspace' ||
-        currentNodes.some((n) => n._id === over.id)
-      )
-      if (isValidDrop) {
-        insertNodeOfType(type, idx, dragData?.shortcutId ? { shortcutId: dragData.shortcutId } : undefined)
+      // Drop on workspace or a top-level sortable node — extract to main sequence
+      if (overId === 'workspace' || nodesRef.current.some((n) => n._id === overId)) {
+        let updated = removeDraggedFromNodes(nodesRef.current)
+        const newNode: ActionNode = { _id: generateNodeId(), action: draggedAction }
+        const insertIdx = idx !== null ? Math.min(idx, updated.length) : updated.length
+        updated = [...updated]
+        updated.splice(insertIdx, 0, newNode)
+        commitNodes(updated)
+        return
+      }
+
+      return
+    }
+
+    if (id.startsWith('lib-')) {
+      const preNodes = preDragNodesRef.current ?? []
+      preDragNodesRef.current = null
+      const insertedId = libInsertedIdRef.current
+      libInsertedIdRef.current = null
+      const libAction = libActionRef.current
+      libActionRef.current = null
+      const currentNodes = nodesRef.current
+
+      const branchTarget = branchDropRef.current
+      setBranchDrop(null)
+      setDropIndex(null)
+
+      // Cancelled / dropped on delete zone / outside workspace — revert
+      if (!over || over.id === 'delete-zone') {
+        setNodes(preNodes)
+        return
+      }
+
+      // Branch drop — insert action into branch
+      if (branchTarget) {
+        const { nodeId, branch } = branchTarget
+        const action = insertedId ? currentNodes.find((n) => n._id === insertedId)?.action : libAction
+        // Base: preNodes (no inserted node)
+        const baseNodes = preNodes
+        if (!action) { setNodes(preNodes); return }
+        const nodeIdx = baseNodes.findIndex((n) => n._id === nodeId)
+        if (nodeIdx !== -1) {
+          const nodeAction = baseNodes[nodeIdx].action
+          let updatedNodes = baseNodes
+          if (nodeAction.type === 'if-else' && (branch === 'then' || branch === 'else')) {
+            const ifElse = nodeAction as IfElseAction
+            const updatedAction: IfElseAction = branch === 'then'
+              ? { ...ifElse, thenActions: [...ifElse.thenActions, action] }
+              : { ...ifElse, elseActions: [...ifElse.elseActions, action] }
+            updatedNodes = baseNodes.map((n, i) => i === nodeIdx ? { ...n, action: updatedAction } : n)
+          } else if (nodeAction.type === 'loop' && branch === 'loop') {
+            const loopAct = nodeAction as LoopAction
+            updatedNodes = baseNodes.map((n, i) => i === nodeIdx ? { ...n, action: { ...loopAct, body: [...loopAct.body, action] } } : n)
+          } else if (nodeAction.type === 'sequence' && branch === 'sequence') {
+            const seqAct = nodeAction as SequenceAction
+            updatedNodes = baseNodes.map((n, i) => i === nodeIdx ? { ...n, action: { ...seqAct, body: [...seqAct.body, action] } } : n)
+          }
+          setPast(p => [...p, preNodes])
+          setFuture([])
+          setNodes(updatedNodes)
+        } else {
+          setNodes(preNodes)
+        }
+        return
+      }
+
+      // Valid drop on workspace — node is already at the correct position
+      if (insertedId && currentNodes.some((n) => n._id === insertedId)) {
+        setPast(p => [...p, preNodes])
+        setFuture([])
+        // currentNodes already has the node in the right spot — just commit
+        setNodes([...currentNodes])
+      } else {
+        setNodes(preNodes)
       }
       return
     }
@@ -2924,7 +3172,7 @@ function ShortcutsEditorInner(): JSX.Element {
         commitNodes(arrayMove(currentNodes, oldIdx, newIdx))
       }
     }
-  }, [insertNodeOfType, commitNodes])
+  }, [commitNodes])
 
   // ── Import / Export / Play ─────────────────────────────────────────────────
 
@@ -3073,7 +3321,7 @@ function ShortcutsEditorInner(): JSX.Element {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft: 14, flex: 1, minWidth: 0 }}>
             <button
               ref={iconBtnRef}
-              onClick={openPicker}
+              onClick={() => { if (pickerOpen) { setPickerOpen(false) } else { openPicker() } }}
               title="Change icon / color"
               style={{
                 width: 24, height: 24, borderRadius: 5, flexShrink: 0,
@@ -3190,26 +3438,45 @@ function ShortcutsEditorInner(): JSX.Element {
                 </div>
               ) : (
                 <SortableContext items={nodes.map((n) => n._id)} strategy={verticalListSortingStrategy}>
-                  {nodes.map((node, idx) => (
-                    <React.Fragment key={node._id}>
-                      {isLibDrag && dropIndex === idx && activeLibType && (
-                        <GhostNode type={activeLibType} nodeStyle={NODE_STYLE} />
-                      )}
-                      <SortableNode
-                        node={node}
-                        nodeStyle={NODE_STYLE}
-                        onChange={(action) => updateNode(node._id, action)}
-                        onDelete={() => deleteNode(node._id)}
-                        errorMsg={idx === errorNodeIndex ? (errorMessage ?? t('shortcuts.executionError')) : undefined}
-                        library={library}
-                        currentEntryId={currentEntryId}
-                        availableVars={collectAvailableVars(nodes, idx)}
-                      />
-                    </React.Fragment>
-                  ))}
-                  {isLibDrag && dropIndex === nodes.length && activeLibType && (
-                    <GhostNode type={activeLibType} nodeStyle={NODE_STYLE} />
-                  )}
+                  {(() => {
+                    const isNestedDrag = activeDragId?.startsWith('nested:') ?? false
+                    const showIndicator = isNestedDrag && dropIndex !== null
+                    const elements: JSX.Element[] = []
+                    for (let i = 0; i < nodes.length; i++) {
+                      const node = nodes[i]
+                      if (showIndicator && dropIndex === i) {
+                        elements.push(
+                          <div key="drop-indicator" style={{
+                            height: 2, background: 'var(--c-accent)', borderRadius: 1,
+                            margin: '2px 0', transition: 'opacity 0.15s', opacity: 0.8,
+                          }} />
+                        )
+                      }
+                      elements.push(
+                        <SortableNode
+                          key={node._id}
+                          node={node}
+                          nodeStyle={NODE_STYLE}
+                          onChange={(action) => updateNode(node._id, action)}
+                          onDelete={() => deleteNode(node._id)}
+                          errorMsg={i === errorNodeIndex ? (errorMessage ?? t('shortcuts.executionError')) : undefined}
+                          library={library}
+                          currentEntryId={currentEntryId}
+                          availableVars={collectAvailableVars(nodes, i)}
+                        />
+                      )
+                    }
+                    // Drop indicator at the end
+                    if (showIndicator && dropIndex >= nodes.length) {
+                      elements.push(
+                        <div key="drop-indicator" style={{
+                          height: 2, background: 'var(--c-accent)', borderRadius: 1,
+                          margin: '2px 0', transition: 'opacity 0.15s', opacity: 0.8,
+                        }} />
+                      )
+                    }
+                    return elements
+                  })()}
                 </SortableContext>
               )}
             </WorkspaceDropZone>
@@ -3228,7 +3495,7 @@ function ShortcutsEditorInner(): JSX.Element {
           />
 
           {/* Palette (right) — also serves as delete drop zone when dragging workspace nodes */}
-          <DeleteDropZone style={{ width: libWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', background: 'var(--c-surface)' }} active={!isLibDrag && activeDragId !== null}>
+          <DeleteDropZone style={{ width: libWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', background: 'var(--c-surface)' }} active={activeDragId !== null} mode={isLibDrag ? 'cancel' : 'delete'}>
             {/* Icon-only tab bar (centered) */}
             <PaletteTabBar active={paletteTab} onChange={(tab) => { setPaletteTab(tab); setSearch(''); setGroupFilter('all') }} />
 
@@ -3382,6 +3649,7 @@ function ShortcutsEditorInner(): JSX.Element {
           onSelectBuiltinIcon={handleSelectBuiltinIcon}
           onSelectBgColor={handleSelectBgColor}
           onClose={() => setPickerOpen(false)}
+          anchorRef={iconBtnRef as React.RefObject<HTMLElement>}
         />
       )}
 

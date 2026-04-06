@@ -11,6 +11,7 @@ import {
   IPC_SHORTCUTS_UPDATED,
   IPC_SHORTCUTS_DATA_REFRESH,
   IPC_SHORTCUTS_CLOSE,
+  IPC_SHORTCUTS_COMMITTED,
   IPC_SHORTCUTS_PLAY,
   IPC_CONFIG_UPDATED,
 } from '@shared/ipc.types'
@@ -69,6 +70,7 @@ export function registerShortcutsHandlers(
           pendingShortcutsData.slot.bgColor,
         )
         const settingsWin = windowManager.getSettingsWindow()
+        settingsWin?.webContents.send(IPC_SHORTCUTS_COMMITTED)
         settingsWin?.webContents.send(IPC_CONFIG_UPDATED, configStore.get())
       } else {
         // Regular slot session: write the slot back into the config

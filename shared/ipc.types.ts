@@ -45,6 +45,7 @@ export const IPC_SHORTCUTS_UPDATE       = 'shortcuts:update'
 export const IPC_SHORTCUTS_UPDATED      = 'shortcuts:updated'
 export const IPC_SHORTCUTS_DATA_REFRESH = 'shortcuts:data-refresh'
 export const IPC_SHORTCUTS_CLOSE        = 'shortcuts:close'
+export const IPC_SHORTCUTS_COMMITTED    = 'shortcuts:committed'
 export const IPC_SHORTCUTS_PLAY         = 'shortcuts:play'
 
 // ── Progress overlay ─────────────────────────────────────────────────────────

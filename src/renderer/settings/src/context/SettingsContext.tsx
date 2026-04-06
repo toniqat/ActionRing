@@ -213,6 +213,13 @@ export function SettingsProvider({
     })
   }, [])
 
+  // When the shortcuts editor commits (closes), a config update follows — skip selection reset.
+  useEffect(() => {
+    window.settingsAPI.onShortcutsCommitted(() => {
+      skipSelectionResetRef.current += 1
+    })
+  }, [])
+
   // Apply slot/library updates coming from the shortcuts editor window (live preview only)
   useEffect(() => {
     window.settingsAPI.onShortcutsUpdated((data: ShortcutsSlotData) => {
