@@ -27,10 +27,13 @@ type NodeStyle = Record<string, { label: string; icon: string; color: string; de
 
 function getNodeStyle(t: (key: keyof Translations) => string): NodeStyle {
   return {
-    launch:   { label: t('action.launch'),   icon: 'launch',   color: '#3b82f6', desc: t('action.launchDesc') },
-    shortcut: { label: t('action.shortcut'), icon: 'shortcut', color: '#8b5cf6', desc: t('action.shortcutDesc') },
-    shell:    { label: t('action.shell'),    icon: 'shell',    color: '#10b981', desc: t('action.shellDesc') },
-    system:   { label: t('action.system'),   icon: 'system',   color: '#f59e0b', desc: t('action.systemDesc') },
+    launch:         { label: t('action.launch'),      icon: 'launch',       color: '#3b82f6', desc: t('action.launchDesc') },
+    keyboard:       { label: t('action.keyboard'),    icon: 'keyboard',     color: '#8b5cf6', desc: t('action.keyboardDesc') },
+    shell:          { label: t('action.shell'),       icon: 'shell',        color: '#10b981', desc: t('action.shellDesc') },
+    system:         { label: t('action.system'),      icon: 'system',       color: '#f59e0b', desc: t('action.systemDesc') },
+    link:           { label: t('action.link'),        icon: 'action_link',  color: '#06b6d4', desc: t('action.linkDesc') },
+    'mouse-move':   { label: t('action.mouseMove'),   icon: 'mouse_move',   color: '#8b5cf6', desc: t('action.mouseMoveDesc') },
+    'mouse-click':  { label: t('action.mouseClick'),  icon: 'mouse_click',  color: '#8b5cf6', desc: t('action.mouseClickDesc') },
   }
 }
 
@@ -344,11 +347,11 @@ function NodeFields({ action, onChange }: { action: ActionConfig; onChange: (a: 
     )
   }
 
-  if (action.type === 'shortcut') {
+  if (action.type === 'keyboard') {
     return (
       <ShortcutRecorder
         value={action.keys}
-        onChange={(keys) => onChange({ type: 'shortcut', keys })}
+        onChange={(keys) => onChange({ type: 'keyboard', keys })}
       />
     )
   }
@@ -375,6 +378,17 @@ function NodeFields({ action, onChange }: { action: ActionConfig; onChange: (a: 
           <option key={a} value={a}>{SYSTEM_LABELS[a]}</option>
         ))}
       </select>
+    )
+  }
+
+  if (action.type === 'link') {
+    return (
+      <input
+        value={action.url}
+        onChange={(e) => onChange({ type: 'link', url: e.target.value })}
+        placeholder="https://..."
+        style={inputStyle}
+      />
     )
   }
 
@@ -415,8 +429,11 @@ export function ShortcutsModal({ actions, onSave, onClose }: ShortcutsModalProps
   const addNode = (type: keyof typeof localNodeStyle) => {
     let action: ActionConfig
     if (type === 'launch') action = { type: 'launch', target: '' }
-    else if (type === 'shortcut') action = { type: 'shortcut', keys: '' }
+    else if (type === 'keyboard') action = { type: 'keyboard', keys: '' }
     else if (type === 'shell') action = { type: 'shell', command: '' }
+    else if (type === 'link') action = { type: 'link', url: '' }
+    else if (type === 'mouse-move') action = { type: 'mouse-move', mode: 'set', x: '0', y: '0' }
+    else if (type === 'mouse-click') action = { type: 'mouse-click', button: 'left' }
     else action = { type: 'system', action: 'volume-up' }
     setNodes((prev) => [...prev, { _id: generateNodeId(), action }])
   }
@@ -436,7 +453,7 @@ export function ShortcutsModal({ actions, onSave, onClose }: ShortcutsModalProps
   const localNodeStyle = getNodeStyle(t)
   const libraryTypes = Object.entries(localNodeStyle).filter(([key]) =>
     !search || key.includes(search.toLowerCase()) || localNodeStyle[key].label.toLowerCase().includes(search.toLowerCase())
-  )
+  ).sort(([, a], [, b]) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
 
   return (
     /* Backdrop */

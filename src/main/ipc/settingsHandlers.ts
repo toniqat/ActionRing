@@ -1,4 +1,4 @@
-import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { ipcMain, dialog, BrowserWindow, nativeTheme } from 'electron'
 import { readFileSync, writeFileSync } from 'fs'
 import type { ConfigStore } from '../ConfigStore'
 import type { WindowManager } from '../WindowManager'
@@ -13,8 +13,21 @@ import {
   IPC_CONFIG_RESET,
   IPC_CONFIG_EXPORT_GLOBAL,
   IPC_CONFIG_IMPORT_GLOBAL,
+  IPC_SHORTCUTS_THEME_UPDATE,
   type ConfigSavePayload
 } from '@shared/ipc.types'
+
+function sendThemeToShortcuts(windowManager: WindowManager, config: AppConfig): void {
+  const shortcutsWin = windowManager.getShortcutsWindow()
+  if (shortcutsWin && !shortcutsWin.isDestroyed()) {
+    const pref = config.theme ?? 'dark'
+    const resolved: 'light' | 'dark' =
+      pref === 'system'
+        ? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
+        : pref
+    shortcutsWin.webContents.send(IPC_SHORTCUTS_THEME_UPDATE, resolved)
+  }
+}
 
 export function registerSettingsHandlers(
   configStore: ConfigStore,
@@ -34,6 +47,9 @@ export function registerSettingsHandlers(
     if (settingsWin && !settingsWin.isDestroyed()) {
       settingsWin.webContents.send(IPC_CONFIG_UPDATED, payload.config)
     }
+
+    // Push resolved theme to shortcuts editor window
+    sendThemeToShortcuts(windowManager, payload.config)
   })
 
   ipcMain.handle(IPC_FILE_PICK_EXE, async (_event) => {
@@ -41,8 +57,14 @@ export function registerSettingsHandlers(
       properties: ['openFile'],
       filters:
         process.platform === 'win32'
-          ? [{ name: 'Executables', extensions: ['exe', 'bat', 'cmd'] }]
-          : [{ name: 'Applications', extensions: ['app', 'sh', ''] }]
+          ? [
+              { name: 'Executables', extensions: ['exe', 'bat', 'cmd'] },
+              { name: 'All Files', extensions: ['*'] }
+            ]
+          : [
+              { name: 'Applications', extensions: ['app', 'sh', ''] },
+              { name: 'All Files', extensions: ['*'] }
+            ]
     })
     return result.canceled ? null : result.filePaths[0]
   })
@@ -65,6 +87,7 @@ export function registerSettingsHandlers(
     if (settingsWin && !settingsWin.isDestroyed()) {
       settingsWin.webContents.send(IPC_CONFIG_UPDATED, newConfig)
     }
+    sendThemeToShortcuts(windowManager, newConfig)
     return newConfig
   })
 
@@ -125,6 +148,7 @@ export function registerSettingsHandlers(
       if (settingsWin && !settingsWin.isDestroyed()) {
         settingsWin.webContents.send(IPC_CONFIG_UPDATED, importedConfig)
       }
+      sendThemeToShortcuts(windowManager, importedConfig)
       return true
     } catch (err) {
       console.error('[ActionRing] Import failed:', err)

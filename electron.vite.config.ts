@@ -25,7 +25,8 @@ export default defineConfig({
           settings: resolve('src/preload/settings.ts'),
           appearance: resolve('src/preload/appearance.ts'),
           shortcuts: resolve('src/preload/shortcuts.ts'),
-          progress: resolve('src/preload/progress.ts')
+          progress: resolve('src/preload/progress.ts'),
+          popupMenu: resolve('src/preload/popupMenu.ts')
         }
       }
     }
@@ -37,7 +38,8 @@ export default defineConfig({
         '@settings': resolve('src/renderer/settings/src'),
         '@shared': resolve('shared'),
         '@shortcuts': resolve('src/renderer/shortcuts/src'),
-        '@progress': resolve('src/renderer/progress/src')
+        '@progress': resolve('src/renderer/progress/src'),
+        '@popup-menu': resolve('src/renderer/popup-menu/src')
       }
     },
     plugins: [react()],
@@ -48,7 +50,8 @@ export default defineConfig({
           settings: resolve('src/renderer/settings/index.html'),
           appearance: resolve('src/renderer/appearance/index.html'),
           shortcuts: resolve('src/renderer/shortcuts/index.html'),
-          progress: resolve('src/renderer/progress/index.html')
+          progress: resolve('src/renderer/progress/index.html'),
+          'popup-menu': resolve('src/renderer/popup-menu/index.html')
         }
       }
     }

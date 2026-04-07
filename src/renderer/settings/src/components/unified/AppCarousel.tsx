@@ -872,8 +872,8 @@ export function AppCarousel(): JSX.Element {
       style={{
         display: 'flex',
         alignItems: 'center',
-        padding: '3px 0 2px',
-        background: 'transparent',
+        padding: '6px 0 4px',
+        background: 'none',
         flexShrink: 0,
         position: 'relative',
         userSelect: 'none',

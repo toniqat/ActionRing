@@ -45,7 +45,7 @@ export function registerIconHandlers(iconStore: IconStore): void {
     } catch {
       return []
     }
-    const skip = new Set(['icon.svg', 'icon.ico', 'tray-icon.svg', 'README.md', 'github-logo.svg'])
+    const skip = new Set(['tray-icon.svg', 'README.md'])
     return files
       .filter((f) => f.endsWith('.svg') && !skip.has(f))
       .map((filename) => {

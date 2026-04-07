@@ -12,6 +12,7 @@ import {
   IPC_APPEARANCE_PANEL_SIZES,
   IPC_WINDOW_MINIMIZE,
   IPC_WINDOW_MAXIMIZE,
+  IPC_WINDOW_CLOSE,
 } from '@shared/ipc.types'
 
 let pendingSlotData: AppearanceSlotData | null = null
@@ -86,5 +87,10 @@ export function registerAppearanceHandlers(windowManager: WindowManager, configS
     } else {
       win.maximize()
     }
+  })
+
+  ipcMain.on(IPC_WINDOW_CLOSE, (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win) win.close()
   })
 }

@@ -56,11 +56,8 @@ declare global {
       resetConfig: () => Promise<AppConfig | null>
       exportAllData: () => Promise<boolean>
       importAllData: () => Promise<boolean>
-      // Update check & install
+      // Update check
       checkForUpdates: () => Promise<UpdateStatus>
-      downloadUpdate: () => void
-      installUpdate: () => void
-      onUpdateStatus: (cb: (status: UpdateStatus) => void) => void
       // Shell utilities
       openExternalUrl: (url: string) => Promise<void>
       // SVG icon loading
@@ -255,7 +252,7 @@ function AppInner(): JSX.Element {
             window.settingsAPI.maximizeWindow()
             setIsMaximized((v) => !v)
           }}
-          onClose={() => window.close()}
+          onClose={() => window.settingsAPI.closeWindow()}
           isMaximized={isMaximized}
         />
       </div>

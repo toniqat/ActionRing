@@ -149,7 +149,7 @@ export function SlotsTab({ config, onSave }: Props): JSX.Element {
 }
 
 function SlotEditor({ slot, onChange }: { slot: SlotConfig; onChange: (s: SlotConfig) => void }): JSX.Element {
-  const actionTypes = ['launch', 'shortcut', 'shell', 'system'] as const
+  const actionTypes = ['launch', 'keyboard', 'shell', 'system'] as const
   const systemActions = [
     'volume-up', 'volume-down', 'mute', 'play-pause',
     'screenshot', 'lock-screen', 'show-desktop'
@@ -213,7 +213,7 @@ function SlotEditor({ slot, onChange }: { slot: SlotConfig; onChange: (s: SlotCo
             const type = e.target.value as typeof actionTypes[number]
             let action: ActionConfig
             if (type === 'launch') action = { type: 'launch', target: '' }
-            else if (type === 'shortcut') action = { type: 'shortcut', keys: '' }
+            else if (type === 'keyboard') action = { type: 'keyboard', keys: '' }
             else if (type === 'shell') action = { type: 'shell', command: '' }
             else action = { type: 'system', action: 'volume-up' }
             onChange({ ...slot, actions: [action] })
@@ -255,12 +255,12 @@ function SlotEditor({ slot, onChange }: { slot: SlotConfig; onChange: (s: SlotCo
         </label>
       )}
 
-      {slot.actions[0]?.type === 'shortcut' && (
+      {slot.actions[0]?.type === 'keyboard' && (
         <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: 0.5 }}>Key Combo</span>
           <input
-            value={(slot.actions[0] as import('@shared/config.types').ShortcutAction).keys}
-            onChange={(e) => onChange({ ...slot, actions: [{ type: 'shortcut', keys: e.target.value }] })}
+            value={(slot.actions[0] as import('@shared/config.types').KeyboardAction).keys}
+            onChange={(e) => onChange({ ...slot, actions: [{ type: 'keyboard', keys: e.target.value }] })}
             placeholder="e.g. ctrl+c"
             style={{
               background: '#2a2a3e', border: '1px solid rgba(255,255,255,0.1)',

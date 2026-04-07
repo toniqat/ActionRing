@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import { useSettings } from '../../context/SettingsContext'
 import { useT } from '../../i18n/I18nContext'
@@ -6,35 +6,48 @@ import { UIIcon } from '@shared/UIIcon'
 import { SVGIcon } from '@shared/SVGIcon'
 import { BUILTIN_ICONS } from '@shared/icons'
 import type { ShortcutEntry, SlotConfig } from '@shared/config.types'
+import type { ResourceIconEntry } from '@shared/ipc.types'
 
 const ACTION_ICONS: Record<string, { icon: string; color: string }> = {
   launch:          { icon: 'launch',        color: '#3b82f6' },
-  shortcut:        { icon: 'shortcut',      color: '#8b5cf6' },
+  keyboard:        { icon: 'keyboard',      color: '#8b5cf6' },
   shell:           { icon: 'shell',         color: '#10b981' },
   system:          { icon: 'system',        color: '#f59e0b' },
-  'if-else':       { icon: 'if_else',       color: '#ec4899' },
-  loop:            { icon: 'loop',          color: '#14b8a6' },
-  wait:            { icon: 'wait',          color: '#94a3b8' },
-  'set-var':       { icon: 'set_var',       color: '#f97316' },
+  link:            { icon: 'action_link',   color: '#06b6d4' },
+  'mouse-move':    { icon: 'mouse_move',    color: '#8b5cf6' },
+  'mouse-click':   { icon: 'mouse_click',   color: '#8b5cf6' },
+  'if-else':       { icon: 'if_else',       color: '#2dd4bf' },
+  loop:            { icon: 'loop',          color: '#2dd4bf' },
+  wait:            { icon: 'wait',          color: '#5eead4' },
+  'set-var':       { icon: 'variable',      color: '#f472b6' },
   toast:           { icon: 'toast',         color: '#a78bfa' },
   'run-shortcut':  { icon: 'call_shortcut', color: '#6366f1' },
+  sequence:        { icon: 'all_inclusive', color: '#2dd4bf' },
+  escape:          { icon: 'exit_to_app',  color: '#5eead4' },
+  stop:            { icon: 'stop',         color: '#5eead4' },
+  calculate:       { icon: 'calculate',    color: '#10b981' },
+  comment:         { icon: 'comment',      color: '#6b7280' },
 }
 
 export function entryIcon(entry: ShortcutEntry): { icon: string; color: string } {
   if (entry.icon) return { icon: entry.icon, color: '#8b5cf6' }
   const first = entry.actions[0]
-  if (first) return ACTION_ICONS[first.type] ?? { icon: 'shortcut', color: '#8b5cf6' }
-  return { icon: 'shortcut', color: '#8b5cf6' }
+  if (first) return ACTION_ICONS[first.type] ?? { icon: 'keyboard', color: '#8b5cf6' }
+  return { icon: 'keyboard', color: '#8b5cf6' }
 }
 
-/** Renders the correct icon element for a ShortcutEntry, handling builtin, custom, and UI icons. */
-function renderEntryIconEl(entry: ShortcutEntry, size: number): JSX.Element | null {
+/** Renders the correct icon element for a ShortcutEntry, handling builtin, resource, custom, and UI icons. */
+function renderEntryIconEl(entry: ShortcutEntry, size: number, resourceIcons: ResourceIconEntry[]): JSX.Element | null {
   if (!entry.icon) {
     const first = entry.actions[0]
-    const ic = first ? (ACTION_ICONS[first.type] ?? { icon: 'shortcut', color: '#8b5cf6' }) : { icon: 'shortcut', color: '#8b5cf6' }
+    const ic = first ? (ACTION_ICONS[first.type] ?? { icon: 'keyboard', color: '#8b5cf6' }) : { icon: 'keyboard', color: '#8b5cf6' }
     return <UIIcon name={ic.icon} size={size} />
   }
   if (entry.iconIsCustom) {
+    if (entry.icon.endsWith('.svg')) {
+      const resource = resourceIcons.find((e) => e.absPath === entry.icon)
+      if (resource) return <SVGIcon svgString={resource.svgContent} size={size} />
+    }
     return <img src={`file://${entry.icon}`} style={{ width: size, height: size, objectFit: 'contain' }} alt="" />
   }
   const builtin = BUILTIN_ICONS.find((ic) => ic.name === entry.icon)
@@ -58,6 +71,8 @@ export interface ShortcutNodeCardProps {
   containerRef?: (el: HTMLDivElement | null) => void
   dragAttributes?: React.HTMLAttributes<HTMLDivElement>
   dragListeners?: React.HTMLAttributes<HTMLDivElement>
+  /** Pre-loaded resource icons for inline SVG rendering. */
+  resourceIcons?: ResourceIconEntry[]
 }
 
 export function ShortcutNodeCard({
@@ -65,6 +80,7 @@ export function ShortcutNodeCard({
   showDeleteButton, onDelete,
   isDragging,
   containerRef, dragAttributes, dragListeners,
+  resourceIcons = [],
 }: ShortcutNodeCardProps): JSX.Element {
   const { color } = entryIcon(entry)
   const badgeColor = entry.bgColor ?? color
@@ -96,7 +112,7 @@ export function ShortcutNodeCard({
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         flexShrink: 0, color: badgeColor,
       }}>
-        {renderEntryIconEl(entry, 12)}
+        {renderEntryIconEl(entry, 12, resourceIcons)}
       </div>
       <span style={{
         flex: 1, fontSize: 12, color: 'var(--c-text)',
@@ -162,7 +178,7 @@ export function ShortcutNodeCard({
 
 // ── DraggableEntry ────────────────────────────────────────────────────────────
 
-function DraggableEntry({ entry, onEdit }: { entry: ShortcutEntry; onEdit: (entry: ShortcutEntry) => void }): JSX.Element {
+function DraggableEntry({ entry, onEdit, resourceIcons }: { entry: ShortcutEntry; onEdit: (entry: ShortcutEntry) => void; resourceIcons: ResourceIconEntry[] }): JSX.Element {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `sidebar-entry-${entry.id}`,
     data: { entry },
@@ -176,6 +192,7 @@ function DraggableEntry({ entry, onEdit }: { entry: ShortcutEntry; onEdit: (entr
       containerRef={setNodeRef}
       dragAttributes={attributes as React.HTMLAttributes<HTMLDivElement>}
       dragListeners={listeners as React.HTMLAttributes<HTMLDivElement>}
+      resourceIcons={resourceIcons}
     />
   )
 }
@@ -188,6 +205,11 @@ export function ShortcutSidebar({ width }: { width: number }): JSX.Element {
 
   const [search, setSearch] = useState('')
   const [selectedGroup, setSelectedGroup] = useState<string>('all')
+  const [resourceIcons, setResourceIcons] = useState<ResourceIconEntry[]>([])
+
+  useEffect(() => {
+    window.settingsAPI?.getResourceIcons?.().then(setResourceIcons).catch(() => {})
+  }, [])
 
   const filtered = library.filter((entry) => {
     const matchesSearch = !search || entry.name.toLowerCase().includes(search.toLowerCase())
@@ -343,9 +365,47 @@ export function ShortcutSidebar({ width }: { width: number }): JSX.Element {
           }}>
             {t('sidebar.noMatch')}
           </div>
+        ) : selectedGroup === 'all' && groups.length > 0 ? (
+          /* Grouped view when "All" is selected */
+          (() => {
+            const grouped = new Map<string, ShortcutEntry[]>()
+            for (const entry of filtered) {
+              const key = entry.groupId ?? '__ungrouped__'
+              if (!grouped.has(key)) grouped.set(key, [])
+              grouped.get(key)!.push(entry)
+            }
+            // Render groups in order: defined groups first, then ungrouped
+            const sections: { label: string; entries: ShortcutEntry[] }[] = []
+            for (const g of groups) {
+              const entries = grouped.get(g.id)
+              if (entries?.length) sections.push({ label: g.name, entries })
+            }
+            const ungrouped = grouped.get('__ungrouped__')
+            if (ungrouped?.length) sections.push({ label: t('sidebar.ungrouped'), entries: ungrouped })
+
+            return sections.map((section) => (
+              <div key={section.label} style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <div style={{
+                  fontSize: 10,
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                  color: 'var(--c-text-dim)',
+                  padding: '6px 2px 2px',
+                  borderBottom: '1px solid var(--c-border-sub)',
+                  marginBottom: 2,
+                }}>
+                  {section.label}
+                </div>
+                {section.entries.map((entry) => (
+                  <DraggableEntry key={entry.id} entry={entry} onEdit={openEditorForEntry} resourceIcons={resourceIcons} />
+                ))}
+              </div>
+            ))
+          })()
         ) : (
           filtered.map((entry) => (
-            <DraggableEntry key={entry.id} entry={entry} onEdit={openEditorForEntry} />
+            <DraggableEntry key={entry.id} entry={entry} onEdit={openEditorForEntry} resourceIcons={resourceIcons} />
           ))
         )}
       </div>

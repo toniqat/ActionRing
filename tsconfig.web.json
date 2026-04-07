@@ -6,7 +6,6 @@
   ],
   "compilerOptions": {
     "composite": true,
-    "baseUrl": ".",
     "paths": {
       "@ring/*": ["src/renderer/ring/src/*"],
       "@settings/*": ["src/renderer/settings/src/*"],

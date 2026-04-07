@@ -17,7 +17,7 @@ import { RingPreview } from './RingPreview'
 import { SlotEditPanel } from './SlotEditPanel'
 import { AppCarousel } from './AppCarousel'
 import { FloatingRingLayoutPanel } from './FloatingRingLayoutPanel'
-import { ShortcutSidebar, ShortcutNodeCard } from './ShortcutSidebar'
+import { ShortcutSidebar, ShortcutNodeCard, entryIcon } from './ShortcutSidebar'
 import type { ShortcutEntry, SlotConfig } from '@shared/config.types'
 
 const SLOT_PANEL_WIDTH = 288
@@ -72,7 +72,17 @@ export function UnifiedTab(): JSX.Element {
       } else {
         ids.push(entry.id)
       }
-      return { ...s, label: s.label || entry.name, shortcutIds: ids }
+      const updated: SlotConfig = { ...s, label: s.label || entry.name, shortcutIds: ids }
+      // Auto-assign shortcut icon when slot has default icon and no prior shortcuts
+      const isDefaultIcon = s.icon === 'star' && !s.iconIsCustom
+      const hadNoShortcuts = !s.shortcutIds || s.shortcutIds.length === 0
+      if (isDefaultIcon && hadNoShortcuts) {
+        const resolved = entryIcon(entry)
+        updated.icon = entry.icon ?? resolved.icon
+        updated.iconIsCustom = entry.iconIsCustom ?? false
+        if (entry.bgColor) updated.bgColor = entry.bgColor
+      }
+      return updated
     }
 
     let newSlots: SlotConfig[]
@@ -233,11 +243,7 @@ export function UnifiedTab(): JSX.Element {
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-        <AppCarousel />
-
-        {/* Main content row: [slot panel] [preview] [resize handle] [sidebar] */}
-        <div style={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
 
           {/* Slot Edit Panel — in flex flow, animates width to push preview right */}
           <AnimatePresence>
@@ -268,11 +274,26 @@ export function UnifiedTab(): JSX.Element {
             )}
           </AnimatePresence>
 
-          {/* Preview area — ring + floating layout toggle */}
+          {/* Preview area — ring + floating layout toggle + app carousel */}
           <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
             <RingPreview />
             {/* Floating Ring Layout toggle + dropdown (top-left) */}
             <FloatingRingLayoutPanel />
+            {/* App carousel — floating at top center, behind side panels */}
+            <div style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              zIndex: 5,
+              display: 'flex',
+              justifyContent: 'center',
+              pointerEvents: 'none',
+            }}>
+              <div style={{ pointerEvents: 'auto' }}>
+                <AppCarousel />
+              </div>
+            </div>
           </div>
 
           {/* Draggable resize handle */}
@@ -291,7 +312,6 @@ export function UnifiedTab(): JSX.Element {
 
           {/* Right sidebar — shortcut library */}
           <ShortcutSidebar width={sidebarWidth} />
-        </div>
       </div>
 
       {/* Drag overlay ghost */}

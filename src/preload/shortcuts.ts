@@ -1,12 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { SlotConfig, ActionConfig } from '@shared/config.types'
-import type { ShortcutsSlotData, PlayNodeResult, ResourceIconEntry } from '@shared/ipc.types'
+import type { ShortcutsSlotData, PlayNodeResult, ResourceIconEntry, PopupMenuItem, PopupMenuShowRequest } from '@shared/ipc.types'
 import {
   IPC_SHORTCUTS_GET_DATA,
   IPC_SHORTCUTS_UPDATE,
   IPC_SHORTCUTS_DATA_REFRESH,
   IPC_SHORTCUTS_CLOSE,
   IPC_SHORTCUTS_PLAY,
+  IPC_SHORTCUTS_THEME_UPDATE,
   IPC_WINDOW_MINIMIZE,
   IPC_WINDOW_MAXIMIZE,
   IPC_PRESET_EXPORT,
@@ -14,6 +15,7 @@ import {
   IPC_FILE_PICK_EXE,
   IPC_ICONS_GET_RESOURCE,
   IPC_ICONS_ADD_RECENT,
+  IPC_POPUP_MENU_SHOW,
 } from '@shared/ipc.types'
 
 contextBridge.exposeInMainWorld('shortcutsAPI', {
@@ -53,5 +55,12 @@ contextBridge.exposeInMainWorld('shortcutsAPI', {
 
   addRecentIcon: (iconRef: string): void => {
     ipcRenderer.send(IPC_ICONS_ADD_RECENT, iconRef)
+  },
+
+  showPopupMenu: (request: PopupMenuShowRequest): Promise<string | null> =>
+    ipcRenderer.invoke(IPC_POPUP_MENU_SHOW, request),
+
+  onThemeChanged: (callback: (theme: 'light' | 'dark') => void): void => {
+    ipcRenderer.on(IPC_SHORTCUTS_THEME_UPDATE, (_event, theme) => callback(theme))
   },
 })

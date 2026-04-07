@@ -1,31 +1,15 @@
 # resources/icons/
 
-Icon assets used for the application window, taskbar, and system tray.
+SVG icon assets used for ring slot icons and UI elements.
 
 ## Files
 
 | File | Used For | Format |
 |---|---|---|
-| `icon.ico` | Windows app icon (taskbar, window frame) + tray icon | ICO (multi-size: 16/32/48/256) |
-| `icon.svg` | macOS/Linux app icon (Dock, Finder) + tray icon | SVG |
 | `tray-icon.svg` | Alternative tray icon (not currently referenced in code) | SVG |
+| `*.svg` | Ring slot icons loaded by `iconHandlers.ts` | SVG |
 
-## How icons are loaded
+## Notes
 
-`WindowManager.ts` and `TrayManager.ts` select the icon at runtime:
-```ts
-const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon.svg'
-```
-
-`package.json` electron-builder config also references:
-- `resources/icons/icon.ico` — Windows build
-- `resources/icons/icon.svg` — macOS build
-
-## Build requirements
-
-- `build:win` requires `icon.ico` to be present — the build will fail without it.
-- `build:mac` requires `icon.svg` (or an `.icns`) to be present.
-- To regenerate icons from a high-resolution PNG, use tools such as:
-  - `electron-icon-builder` (npm)
-  - `png2icons` (npm)
-  - Online converters (e.g. cloudconvert.com)
+- App logo files (`icon.ico`, `icon.svg`, `github-logo.svg`) have been moved to `resources/logo/`.
+- `iconHandlers.ts` reads this folder to list available slot icons, skipping `tray-icon.svg` and `README.md`.

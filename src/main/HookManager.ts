@@ -22,6 +22,95 @@ const MODIFIER_KEYCODES: Record<string, number[]> = {
 const MIN_DISPLAY_MS = 250        // ring stays visible for at least this long
 const POST_IDLE_COOLDOWN_MS = 100 // ignore triggers for this long after exit animation completes
 
+// ── uiohook keycode ↔ display name mapping ────────────────────────────────────
+const KEYCODE_TO_NAME: Record<number, string> = {
+  // Letters
+  16: 'Q', 17: 'W', 18: 'E', 19: 'R', 20: 'T', 21: 'Y', 22: 'U', 23: 'I', 24: 'O', 25: 'P',
+  30: 'A', 31: 'S', 32: 'D', 33: 'F', 34: 'G', 35: 'H', 36: 'J', 37: 'K', 38: 'L',
+  44: 'Z', 45: 'X', 46: 'C', 47: 'V', 48: 'B', 49: 'N', 50: 'M',
+  // Digits
+  2: '1', 3: '2', 4: '3', 5: '4', 6: '5', 7: '6', 8: '7', 9: '8', 10: '9', 11: '0',
+  // F-keys
+  59: 'F1', 60: 'F2', 61: 'F3', 62: 'F4', 63: 'F5', 64: 'F6',
+  65: 'F7', 66: 'F8', 67: 'F9', 68: 'F10', 87: 'F11', 88: 'F12',
+  // Special
+  1: 'Esc', 14: 'Backspace', 15: 'Tab', 28: 'Enter', 57: 'Space',
+  3639: 'PrintScreen', 70: 'ScrollLock', 3653: 'Pause',
+  3666: 'Insert', 3667: 'Delete', 3655: 'Home', 3663: 'End', 3657: 'PageUp', 3665: 'PageDown',
+  // Arrow keys
+  57416: 'Up', 57424: 'Down', 57419: 'Left', 57421: 'Right',
+  // Punctuation / misc
+  12: 'Minus', 13: 'Equal', 26: 'BracketLeft', 27: 'BracketRight', 43: 'Backslash',
+  39: 'Semicolon', 40: 'Quote', 41: 'Backquote', 51: 'Comma', 52: 'Period', 53: 'Slash',
+  // Numpad
+  3637: 'NumDivide', 55: 'NumMultiply', 74: 'NumMinus', 78: 'NumPlus', 3612: 'NumEnter',
+  82: 'Num0', 79: 'Num1', 80: 'Num2', 81: 'Num3', 75: 'Num4',
+  76: 'Num5', 77: 'Num6', 71: 'Num7', 72: 'Num8', 73: 'Num9', 83: 'NumDecimal',
+}
+
+// Reverse lookup: name → keycode
+const NAME_TO_KEYCODE: Record<string, number> = {}
+for (const [code, name] of Object.entries(KEYCODE_TO_NAME)) {
+  NAME_TO_KEYCODE[name.toLowerCase()] = Number(code)
+}
+
+// Aliases for browser KeyboardEvent.key names → uiohook keycodes
+// buildKeyCombo() in the renderer uses e.key, which differs from KEYCODE_TO_NAME.
+const BROWSER_KEY_ALIASES: Record<string, number> = {
+  arrowup: 57416, arrowdown: 57424, arrowleft: 57419, arrowright: 57421,
+  escape: 1, backspace: 14, tab: 15, enter: 28, ' ': 57,
+  insert: 3666, delete: 3667, home: 3655, end: 3663, pageup: 3657, pagedown: 3665,
+  printscreen: 3639, scrolllock: 70, pause: 3653,
+  capslock: 58, numlock: 69,
+}
+// Merge aliases into NAME_TO_KEYCODE (lower priority — don't overwrite existing)
+for (const [alias, code] of Object.entries(BROWSER_KEY_ALIASES)) {
+  if (!(alias in NAME_TO_KEYCODE)) NAME_TO_KEYCODE[alias] = code
+}
+
+// Mouse button number ↔ display name
+const MOUSE_BUTTON_NAMES: Record<number, string> = {
+  1: 'Mouse1', 2: 'Mouse2', 3: 'Mouse3', 4: 'Mouse4', 5: 'Mouse5',
+}
+const MOUSE_NAME_TO_BUTTON: Record<string, number> = {}
+for (const [btn, name] of Object.entries(MOUSE_BUTTON_NAMES)) {
+  MOUSE_NAME_TO_BUTTON[name.toLowerCase()] = Number(btn)
+}
+
+/** Modifier display names in canonical order. */
+const MODIFIER_DISPLAY: Record<string, string> = {
+  ctrl: 'Ctrl', alt: 'Alt', shift: 'Shift', meta: 'Meta',
+}
+
+/** Parse a waitKeys string like "Ctrl+Shift+D" or "Alt+Mouse4" into modifiers + trigger. */
+export function parseWaitKeys(keys: string): {
+  modifiers: string[]  // ['ctrl','shift'] etc.
+  keycode?: number     // uiohook keycode for keyboard trigger
+  mouseButton?: number // mouse button number
+} | null {
+  if (!keys) return null
+  const parts = keys.split('+')
+  const modifiers: string[] = []
+  let keycode: number | undefined
+  let mouseButton: number | undefined
+
+  for (const part of parts) {
+    const lower = part.trim().toLowerCase()
+    // Handle "Win" as alias for "meta"
+    const normalized = lower === 'win' ? 'meta' : lower
+    if (normalized === 'ctrl' || normalized === 'alt' || normalized === 'shift' || normalized === 'meta') {
+      modifiers.push(normalized)
+    } else if (MOUSE_NAME_TO_BUTTON[lower] !== undefined) {
+      mouseButton = MOUSE_NAME_TO_BUTTON[lower]
+    } else if (NAME_TO_KEYCODE[lower] !== undefined) {
+      keycode = NAME_TO_KEYCODE[lower]
+    }
+  }
+
+  if (keycode === undefined && mouseButton === undefined) return null
+  return { modifiers, keycode, mouseButton }
+}
+
 export class HookManager {
   private configStore: ConfigStore
   private windowTracker: WindowTracker
@@ -40,6 +129,14 @@ export class HookManager {
   private mouseCaptureReady = false   // becomes true after 150ms grace period
   private mouseCaptureCallback: ((button: number) => void) | null = null
   private mouseCaptureTimer: ReturnType<typeof setTimeout> | null = null
+
+  // ── Key-input wait (ActionExecutor: runtime wait-for-input) ───────────────
+  private keyInputWaitResolvers: Array<{
+    modifiers: string[]
+    keycode?: number
+    mouseButton?: number
+    resolve: () => void
+  }> = []
 
   constructor(configStore: ConfigStore, windowTracker: WindowTracker, getRingWindow: () => BrowserWindow | null) {
     this.configStore = configStore
@@ -60,6 +157,9 @@ export class HookManager {
           cb(e.button)
           return
         }
+
+        // Runtime key-input wait: check if any waiters match this mouse event
+        this.checkKeyInputWaiters(undefined, e.button)
 
         const config = this.configStore.get()
         if (!config.enabled) return
@@ -179,6 +279,13 @@ export class HookManager {
             this.activeModifiers.add(mod)
           }
         }
+
+        // Runtime key-input wait: check if any waiters match this key event
+        const isModifier = Object.values(MODIFIER_KEYCODES).some((codes) => codes.includes(e.keycode))
+        if (!isModifier) {
+          this.checkKeyInputWaiters(e.keycode, undefined)
+        }
+
         // Escape dismisses ring — plays exit animation, rendererIdle unlocked via ring:idle
         if (e.keycode === 1 && this.triggerActive) {
           this.dismissRing()
@@ -239,6 +346,44 @@ export class HookManager {
     if (this.mouseCaptureTimer !== null) {
       clearTimeout(this.mouseCaptureTimer)
       this.mouseCaptureTimer = null
+    }
+  }
+
+  // ── Key-input wait (runtime: ActionExecutor) ──────────────────────────────
+
+  /** Returns a Promise that resolves when the specified key combination is pressed. */
+  waitForKeyInput(keys: string): Promise<void> {
+    const parsed = parseWaitKeys(keys)
+    if (!parsed) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      this.keyInputWaitResolvers.push({
+        modifiers: parsed.modifiers,
+        keycode: parsed.keycode,
+        mouseButton: parsed.mouseButton,
+        resolve,
+      })
+    })
+  }
+
+  /** Check pending key-input waiters against the current event. */
+  private checkKeyInputWaiters(keycode: number | undefined, mouseButton: number | undefined): void {
+    const resolved: number[] = []
+    for (let i = 0; i < this.keyInputWaitResolvers.length; i++) {
+      const w = this.keyInputWaitResolvers[i]
+      // Check trigger match
+      const triggerMatch =
+        (w.keycode !== undefined && w.keycode === keycode) ||
+        (w.mouseButton !== undefined && w.mouseButton === mouseButton)
+      if (!triggerMatch) continue
+      // Check all required modifiers are active
+      const modsMatch = w.modifiers.every((m) => this.activeModifiers.has(m))
+      if (!modsMatch) continue
+      w.resolve()
+      resolved.push(i)
+    }
+    // Remove resolved waiters in reverse order
+    for (let i = resolved.length - 1; i >= 0; i--) {
+      this.keyInputWaitResolvers.splice(resolved[i], 1)
     }
   }
 

@@ -1,6 +1,7 @@
-export type ActionType = 'launch' | 'shortcut' | 'shell' | 'system' | 'folder'
-  | 'if-else' | 'loop' | 'sequence' | 'wait' | 'set-var' | 'toast' | 'run-shortcut'
+export type ActionType = 'launch' | 'keyboard' | 'shell' | 'system' | 'folder' | 'link'
+  | 'if-else' | 'loop' | 'sequence' | 'wait' | 'set-var' | 'list' | 'dict' | 'toast' | 'run-shortcut'
   | 'escape' | 'stop' | 'calculate' | 'comment'
+  | 'mouse-move' | 'mouse-click'
 
 export type SystemActionId =
   | 'volume-up'
@@ -16,8 +17,8 @@ export interface LaunchAction {
   target: string
 }
 
-export interface ShortcutAction {
-  type: 'shortcut'
+export interface KeyboardAction {
+  type: 'keyboard'
   keys: string
 }
 
@@ -35,6 +36,11 @@ export interface FolderAction {
   type: 'folder'
 }
 
+export interface LinkAction {
+  type: 'link'
+  url: string
+}
+
 // ── Script / Logic actions (v9+) ──────────────────────────────────────────────
 
 export type ConditionOperator =
@@ -50,6 +56,15 @@ export interface ConditionCriteria {
   value: string
 }
 
+/** A single case branch in a switch-style condition. */
+export interface SwitchCase {
+  /** Value to match against the switch expression (exact equality) */
+  value: string
+  actions: ActionConfig[]
+}
+
+export type ConditionMode = 'if-else' | 'switch'
+
 export interface IfElseAction {
   type: 'if-else'
   /** @deprecated Use matchLogic + criteria instead */
@@ -60,6 +75,14 @@ export interface IfElseAction {
   criteria?: ConditionCriteria[]
   thenActions: ActionConfig[]
   elseActions: ActionConfig[]
+  /** Condition mode: 'if-else' (default) or 'switch' */
+  conditionMode?: ConditionMode
+  /** Switch mode: the expression to evaluate (e.g. '$status') */
+  switchValue?: string
+  /** Switch mode: ordered list of case branches */
+  switchCases?: SwitchCase[]
+  /** Switch mode: optional default branch actions */
+  switchDefault?: ActionConfig[]
 }
 
 export type LoopMode = 'repeat' | 'for' | 'foreach'
@@ -68,35 +91,39 @@ export interface LoopAction {
   type: 'loop'
   /** Iteration mode: 'repeat' (default), 'for' (index-based), 'foreach' (list-based) */
   mode?: LoopMode
-  /** Repeat mode: number of times to repeat the body (1–1000) */
-  count: number
+  /** Repeat mode: number of times to repeat the body (1–1000), or a variable reference like "$myVar" */
+  count: number | string
   /** For mode: index variable name (e.g. "i") */
   iterVar?: string
-  /** For mode: inclusive start value */
-  start?: number
-  /** For mode: exclusive end value */
-  end?: number
-  /** For mode: step value (default 1) */
-  step?: number
-  /** ForEach mode: variable name for the current item */
+  /** For mode: inclusive start value, or a variable reference */
+  start?: number | string
+  /** For mode: exclusive end value, or a variable reference */
+  end?: number | string
+  /** For mode: step value (default 1), or a variable reference */
+  step?: number | string
+  /** ForEach mode: variable name for the current item (or dict value) */
   itemVar?: string
-  /** ForEach mode: name of the List variable to iterate */
+  /** ForEach mode: variable name for the current dict key */
+  keyVar?: string
+  /** ForEach mode: name of the List/Dict variable to iterate */
   listVar?: string
   body: ActionConfig[]
 }
 
-export type WaitMode = 'manual' | 'variable' | 'app-exit'
+export type WaitMode = 'manual' | 'variable' | 'app-exit' | 'key-input'
 
 export interface WaitAction {
   type: 'wait'
   /** Delay in milliseconds (used when mode is 'manual' or absent) */
   ms: number
-  /** Wait mode: 'manual' (default), 'variable', 'app-exit' */
+  /** Wait mode: 'manual' (default), 'variable', 'app-exit', 'key-input' */
   mode?: WaitMode
   /** Variable name containing ms value (mode: 'variable') */
   variable?: string
   /** Launch target path whose spawned PID to wait for (mode: 'app-exit') */
   launchRef?: string
+  /** Recorded key/mouse combination to wait for (mode: 'key-input'), e.g. "Ctrl+Shift+D", "Alt+Mouse4" */
+  waitKeys?: string
 }
 
 /** Runs body actions as an independent parallel task. Main flow continues immediately. */
@@ -112,8 +139,14 @@ export interface SequenceAction {
 
 export type VarScope = 'local'
 
-export type VarDataType = 'string' | 'list' | 'dict'
+export type VarDataType = 'single' | 'list' | 'dict'
 export type VarOperation = 'set' | 'get' | 'push' | 'remove'
+export type VarMode = 'define' | 'edit'
+
+export interface DictEntry {
+  key: string
+  value: string
+}
 
 export interface SetVarAction {
   type: 'set-var'
@@ -121,14 +154,42 @@ export interface SetVarAction {
   /** Literal value or expression: "$other + 1", "hello $name" */
   value: string
   scope?: VarScope
-  /** Data type for the variable (v11+): 'string' (default), 'list', 'dict' */
-  dataType?: VarDataType
-  /** CRUD operation (v11+): 'set' (default), 'get', 'push', 'remove' */
+}
+
+export interface ListAction {
+  type: 'list'
+  name: string
+  scope?: VarScope
+  /** Mode: 'define' (initial values) or 'edit' (CRUD operations) */
+  mode?: VarMode
+  /** CRUD operation (edit mode): 'set' | 'get' | 'push' | 'remove' */
   operation?: VarOperation
-  /** For dict: key name; for list: index (as string) — used by get/remove */
+  /** Value for set/push operations */
+  value?: string
+  /** Index (as string) — used by get/remove */
   key?: string
-  /** For 'get' operation: variable name to store the retrieved value */
+  /** Variable name to store the retrieved value (get operation) */
   resultVar?: string
+  /** Define mode: initial list items */
+  listItems?: string[]
+}
+
+export interface DictAction {
+  type: 'dict'
+  name: string
+  scope?: VarScope
+  /** Mode: 'define' (initial values) or 'edit' (CRUD operations) */
+  mode?: VarMode
+  /** CRUD operation (edit mode): 'set' | 'get' | 'remove' */
+  operation?: VarOperation
+  /** Value for set operation */
+  value?: string
+  /** Key name — used by set/get/remove */
+  key?: string
+  /** Variable name to store the retrieved value (get operation) */
+  resultVar?: string
+  /** Define mode: initial key-value entries */
+  dictItems?: DictEntry[]
 }
 
 export interface ToastAction {
@@ -180,9 +241,28 @@ export interface CommentAction {
   text: string
 }
 
-export type ActionConfig = LaunchAction | ShortcutAction | ShellAction | SystemAction | FolderAction
-  | IfElseAction | LoopAction | SequenceAction | WaitAction | SetVarAction | ToastAction | RunShortcutAction
+// ── Mouse actions ────────────────────────────────────────────────────────────
+
+export type MouseMoveMode = 'set' | 'offset'
+
+export interface MouseMoveAction {
+  type: 'mouse-move'
+  mode: MouseMoveMode
+  x: string
+  y: string
+}
+
+export type MouseButton = 'left' | 'right' | 'middle' | 'side1' | 'side2' | 'wheel-up' | 'wheel-down'
+
+export interface MouseClickAction {
+  type: 'mouse-click'
+  button: MouseButton
+}
+
+export type ActionConfig = LaunchAction | KeyboardAction | ShellAction | SystemAction | FolderAction | LinkAction
+  | IfElseAction | LoopAction | SequenceAction | WaitAction | SetVarAction | ListAction | DictAction | ToastAction | RunShortcutAction
   | EscapeAction | StopAction | CalculateAction | CommentAction
+  | MouseMoveAction | MouseClickAction
 
 /** A named group for organizing shortcuts in the library. */
 export interface ShortcutGroup {

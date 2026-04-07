@@ -16,8 +16,8 @@ export class TrayManager {
   create(): void {
     const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon.svg'
     const iconPath = is.dev
-      ? join(process.cwd(), 'resources/icons', iconFile)
-      : join(process.resourcesPath, 'icons', iconFile)
+      ? join(process.cwd(), 'resources/logo', iconFile)
+      : join(process.resourcesPath, 'logo', iconFile)
 
     let icon: Electron.NativeImage
     try {
@@ -80,8 +80,8 @@ export class TrayManager {
       new Notification({ title, body }).show()
     } else {
       const iconPath = is.dev
-        ? join(process.cwd(), 'resources/icons', 'icon.svg')
-        : join(process.resourcesPath, 'icons', 'icon.svg')
+        ? join(process.cwd(), 'resources/logo', 'icon.svg')
+        : join(process.resourcesPath, 'logo', 'icon.svg')
       new Notification({ title, body, icon: iconPath }).show()
     }
   }

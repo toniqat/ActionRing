@@ -10,7 +10,7 @@ Standalone overlay app replicating the Logitech MX Master 4 "Action Rings" featu
 |---|---|
 | Main process entry point | `src/main/index.ts` |
 | Global input hook (mouse/keyboard) | `src/main/HookManager.ts` |
-| Action execution (launch/shortcut/shell/system) | `src/main/ActionExecutor.ts` |
+| Action execution (launch/keyboard/shell/system/mouse) | `src/main/ActionExecutor.ts` |
 | Config persistence (JSON) | `src/main/ConfigStore.ts` |
 | Icon library management | `src/main/IconStore.ts` |
 | Active window tracking | `src/main/WindowTracker.ts` |
@@ -92,3 +92,6 @@ npm run build:mac  # Package as macOS .dmg
 - `trigger:start-mouse-capture` / `trigger:cancel-mouse-capture` — settings → main
 - `trigger:mouse-captured` — main → settings (captured button result)
 - `window:minimize` / `window:maximize` — settings/appearance → main
+
+## Terminology
+For all UI, IPC, and domain terminology, see [PROMPT.md](./PROMPT.md). Always use the canonical names defined there when communicating about the project.

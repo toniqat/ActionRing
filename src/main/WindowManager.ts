@@ -5,8 +5,8 @@ import { is } from '@electron-toolkit/utils'
 function getAppIcon(): Electron.NativeImage {
   const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon.svg'
   const iconPath = is.dev
-    ? join(process.cwd(), 'resources/icons', iconFile)
-    : join(process.resourcesPath, 'icons', iconFile)
+    ? join(process.cwd(), 'resources/logo', iconFile)
+    : join(process.resourcesPath, 'logo', iconFile)
   try {
     const img = nativeImage.createFromPath(iconPath)
     return img.isEmpty() ? nativeImage.createEmpty() : img
@@ -97,6 +97,7 @@ export class WindowManager {
       if (!this.quitting) {
         e.preventDefault()
         win.hide()
+        this.closeChildWindows()
         this.settingsHideCallback?.()
       }
     })
@@ -188,7 +189,7 @@ export class WindowManager {
     return this.appearanceWindow
   }
 
-  createShortcutsWindow(theme: 'light' | 'dark' = 'dark', parent?: BrowserWindow): BrowserWindow {
+  createShortcutsWindow(theme: 'light' | 'dark' = 'dark'): BrowserWindow {
     if (this.shortcutsWindow && !this.shortcutsWindow.isDestroyed()) {
       this.shortcutsWindow.focus()
       return this.shortcutsWindow
@@ -204,8 +205,6 @@ export class WindowManager {
       frame: false,
       resizable: true,
       show: false,
-      modal: false,
-      parent: parent,
       icon: getAppIcon(),
       backgroundColor: bgColor,
       webPreferences: {
@@ -284,6 +283,15 @@ export class WindowManager {
 
   getProgressWindow(): BrowserWindow | null {
     return this.progressWindow
+  }
+
+  private closeChildWindows(): void {
+    if (this.shortcutsWindow && !this.shortcutsWindow.isDestroyed()) {
+      this.shortcutsWindow.close()
+    }
+    if (this.appearanceWindow && !this.appearanceWindow.isDestroyed()) {
+      this.appearanceWindow.close()
+    }
   }
 
   hideRing(): void {

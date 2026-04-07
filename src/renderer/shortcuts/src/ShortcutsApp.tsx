@@ -1,13 +1,16 @@
-import React, { useState, useCallback, useEffect, useRef, Component } from 'react'
+import React, { useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo, useContext, Component } from 'react'
+import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
-import type { PlayNodeResult, ShortcutsSlotData, ResourceIconEntry } from '@shared/ipc.types'
+import type { PlayNodeResult, ShortcutsSlotData, ResourceIconEntry, PopupMenuShowRequest } from '@shared/ipc.types'
 import { WinControls } from '@settings/components/WinControls'
 import { I18nProvider, useT } from '@settings/i18n/I18nContext'
 import { BUILTIN_ICONS } from '@shared/icons'
 import { UIIcon } from '@shared/UIIcon'
 import { SVGIcon } from '@shared/SVGIcon'
 import { HexColorPicker } from 'react-colorful'
-import { VariableInput, collectAvailableVars } from './VariableInput'
+import { VariableInput, collectAvailableVars, collectAvailableVarInfos, ReturnValuePickerContext, LoopInsertContext, clampMenuPosition, getSourceIcon, getSourceColor, ValueDragContext, TAB_FIELD_ATTR, focusNextTabField } from './VariableInput'
+import { CustomSelect } from './CustomSelect'
+import type { VarInfo, ReturnValuePickerState, ReturnValueNodeMeta, LoopAssignOption, ValueDragState, ReturnValueInfo } from './VariableInput'
 import {
   DndContext,
   closestCenter,
@@ -22,6 +25,7 @@ import {
   MeasuringStrategy,
   type DragStartEvent,
   type DragOverEvent,
+  type DragMoveEvent,
   type DragEndEvent,
   type CollisionDetection,
   type DroppableContainer,
@@ -37,9 +41,9 @@ import { CSS } from '@dnd-kit/utilities'
 import type {
   ActionConfig, SlotConfig, SystemActionId, Language,
   IfElseAction, LoopAction, WaitAction, SetVarAction, ToastAction, RunShortcutAction,
-  ConditionCriteria, ConditionOperator, ConditionMatchLogic,
-  LoopMode, VarDataType, VarOperation, CalculateAction, CalcOperation, CommentAction, StopAction,
-  SequenceAction, WaitMode,
+  ConditionCriteria, ConditionOperator, ConditionMatchLogic, ConditionMode, SwitchCase,
+  LoopMode, VarOperation, VarMode, CalculateAction, CalcOperation, CommentAction, StopAction,
+  SequenceAction, WaitMode, ListAction, DictAction,
 } from '@shared/config.types'
 import type { ShortcutEntry, ShortcutGroup } from '@shared/config.types'
 import type { Translations } from '@settings/i18n/locales'
@@ -61,6 +65,8 @@ declare global {
       onDataRefresh: (cb: (data: ShortcutsSlotData) => void) => void
       getResourceIcons: () => Promise<ResourceIconEntry[]>
       addRecentIcon: (iconRef: string) => void
+      showPopupMenu: (request: PopupMenuShowRequest) => Promise<string | null>
+      onThemeChanged: (cb: (theme: 'light' | 'dark') => void) => void
     }
   }
 }
@@ -90,101 +96,100 @@ class SmartPointerSensor extends PointerSensor {
   ]
 }
 
-// ── Custom collision detection — prioritise branch drop zones ────────────────
-// Branch zones (id starting with "branch:") are small and easily eclipsed by
-// large sortable items around them.  We check branch zones first using
-// rectIntersection so they win when the pointer is actually inside them.
-
 // IDs of large wrapper drop zones that should only match as a last resort
 const ZONE_IDS = new Set(['workspace', 'delete-zone'])
 
-const branchPriorityCollision: CollisionDetection = (args) => {
-  const activeId = args.active.id.toString()
-  const isNestedDrag = activeId.startsWith('nested:')
+// ── Return value picker context ───────────────────────────────────────────────
 
-  const nestedContainers: DroppableContainer[] = []
-  const branchContainers: DroppableContainer[] = []
-  const sortableContainers: DroppableContainer[] = []   // individual node items
-  const zoneContainers: DroppableContainer[] = []        // workspace / delete-zone
-  for (const container of args.droppableContainers) {
-    const id = container.id.toString()
-    if (id.startsWith('nested:')) {
-      nestedContainers.push(container)
-    } else if (id.startsWith('branch:')) {
-      branchContainers.push(container)
-    } else if (ZONE_IDS.has(id)) {
-      zoneContainers.push(container)
-    } else {
-      sortableContainers.push(container)
-    }
-  }
+/** Describes the return value produced by a single action node. */
+export interface NodeReturnValue {
+  /** Variable-style reference to insert (e.g. "$myVar", "$__launch_0") */
+  ref: string
+  /** Human-readable short label (e.g. "앱 경로", "종료 코드") */
+  label: string
+  /** Action type that produced this return value (for icon display) */
+  sourceType: string
+}
 
-  if (isNestedDrag) {
-    // When dragging a nested item, first check if the pointer is over a zone
-    // (delete-zone / workspace).  If so, that takes priority so nested items
-    // can be extracted or deleted.
-    if (zoneContainers.length > 0) {
-      const zoneHits = rectIntersection({ ...args, droppableContainers: zoneContainers })
-      if (zoneHits.length > 0) {
-        // Pointer is inside a zone — but only honour it when it is NOT also
-        // inside a branch zone (branches are more specific).
-        const branchHits = branchContainers.length > 0
-          ? rectIntersection({ ...args, droppableContainers: branchContainers })
-          : []
-        if (branchHits.length === 0) return zoneHits
-      }
+/**
+ * Returns the return value(s) a given action produces, or null if none.
+ * `nodeIndex` is used to generate unique implicit variable names for actions
+ * that don't declare an explicit variable (launch, shortcut, shell).
+ */
+function getNodeReturnValues(
+  action: ActionConfig,
+  nodeIndex: number,
+  t: (key: keyof Translations) => string,
+): NodeReturnValue[] | null {
+  switch (action.type) {
+    case 'launch':
+      return [{ ref: `$__launch_${nodeIndex}`, label: t('script.returnLaunchTarget'), sourceType: 'launch' }]
+    case 'keyboard':
+      return [{ ref: `$__keys_${nodeIndex}`, label: t('script.returnKeysCombo'), sourceType: 'keyboard' }]
+    case 'shell':
+      return [{ ref: `$__exit_${nodeIndex}`, label: t('script.returnExitCode'), sourceType: 'shell' }]
+    case 'set-var':
+    case 'list':
+    case 'dict':
+      return null
+    case 'calculate': {
+      const a = action as CalculateAction
+      if (a.resultVar) return [{ ref: `$${a.resultVar}`, label: t('script.returnResultVar'), sourceType: 'calculate' }]
+      return null
     }
-    // Then check sortable top-level nodes (for insertion between them)
-    if (sortableContainers.length > 0) {
-      const sortHits = closestCenter({ ...args, droppableContainers: sortableContainers })
-      if (sortHits.length > 0) {
-        // Only honour sortable hits when the pointer is outside all branch zones
-        const branchHits = branchContainers.length > 0
-          ? rectIntersection({ ...args, droppableContainers: branchContainers })
-          : []
-        if (branchHits.length === 0) return sortHits
-      }
+    case 'run-shortcut': {
+      const a = action as RunShortcutAction
+      if (a.outputVar) return [{ ref: `$${a.outputVar}`, label: t('script.returnOutputVar'), sourceType: 'run-shortcut' }]
+      return null
     }
-    // Then nested items for reorder within/across branches
-    if (nestedContainers.length > 0) {
-      const hits = closestCenter({ ...args, droppableContainers: nestedContainers })
-      if (hits.length > 0) return hits
+    case 'stop': {
+      const a = action as StopAction
+      if (a.returnVar) return [{ ref: `$${a.returnVar}`, label: t('script.returnReturnVar'), sourceType: 'stop' }]
+      return null
     }
-    if (branchContainers.length > 0) {
-      const hits = rectIntersection({ ...args, droppableContainers: branchContainers })
-      if (hits.length > 0) return hits
+    case 'loop': {
+      const a = action as LoopAction
+      const mode = a.mode ?? 'repeat'
+      if (mode === 'repeat') return [{ ref: `$__loop_count_${nodeIndex}`, label: t('script.returnLoopCount'), sourceType: 'loop' }]
+      if (mode === 'for') return [{ ref: `$__loop_i_${nodeIndex}`, label: t('script.returnLoopIndex'), sourceType: 'loop' }]
+      if (mode === 'foreach' && a.itemVar) return [{ ref: `$${a.itemVar}`, label: t('script.returnLoopItem'), sourceType: 'loop' }]
+      return null
     }
-    const remaining = [...sortableContainers, ...zoneContainers]
-    return closestCenter({ ...args, droppableContainers: remaining.length > 0 ? remaining : args.droppableContainers })
+    default:
+      return null
   }
+}
 
-  // Non-nested drag: check if pointer is inside the delete-zone first.
-  // Without this, closestCenter on sortable nodes always wins even when the
-  // pointer is clearly over the delete-zone, preventing node deletion.
-  const deleteZone = zoneContainers.filter(c => c.id === 'delete-zone')
-  if (deleteZone.length > 0) {
-    const deleteHits = rectIntersection({ ...args, droppableContainers: deleteZone })
-    if (deleteHits.length > 0) return deleteHits
+/**
+ * Determines whether a node produces pipeline output that auto-flows to the
+ * next node — mirroring macOS Shortcuts' pipeline line behaviour.
+ *
+ * Return `true` → the connecting line continues after this node.
+ * Return `false` → the line breaks (gap).
+ */
+function nodeHasPipelineOutput(action: ActionConfig): boolean {
+  switch (action.type) {
+    // These always produce an implicit return value that pipes forward
+    case 'launch':
+    case 'keyboard':
+    case 'shell':
+      return true
+    // Computation results pipe forward when an output variable is set
+    case 'calculate':
+      return !!(action as CalculateAction).resultVar
+    case 'run-shortcut':
+      return !!(action as RunShortcutAction).outputVar
+    // Everything else: set-var (declares a named variable — no pipe),
+    // control flow (if-else, loop, sequence), side-effects (wait, toast,
+    // comment, escape, stop, system) — pipeline breaks.
+    default:
+      return false
   }
-  // Then prioritise branch zones, then individual sortable nodes
-  if (branchContainers.length > 0) {
-    const branchHits = rectIntersection({ ...args, droppableContainers: branchContainers })
-    if (branchHits.length > 0) return branchHits
-  }
-  if (sortableContainers.length > 0) {
-    const sortHits = closestCenter({ ...args, droppableContainers: sortableContainers })
-    if (sortHits.length > 0) return sortHits
-  }
-  // Fall back to remaining zones (workspace)
-  if (zoneContainers.length > 0) {
-    return rectIntersection({ ...args, droppableContainers: zoneContainers })
-  }
-  return closestCenter({ ...args, droppableContainers: args.droppableContainers })
 }
 
 // ── Palette tab type ───────────────────────────────────────────────────────────
 
-type PaletteTab = 'actions' | 'scripts' | 'shortcuts' | 'all'
+type PaletteTab = 'actions' | 'scripts' | 'all' | 'values'
 
 // ── Node visual config ─────────────────────────────────────────────────────────
 
@@ -193,20 +198,25 @@ type NodeStyle = Record<string, { label: string; icon: string; color: string; de
 function getNodeStyle(t: (key: keyof Translations) => string): NodeStyle {
   return {
     launch:          { label: t('action.launch'),          icon: 'launch',        color: '#3b82f6', desc: t('action.launchDesc') },
-    shortcut:        { label: t('action.shortcut'),        icon: 'shortcut',      color: '#8b5cf6', desc: t('action.shortcutDesc') },
+    keyboard:        { label: t('action.keyboard'),        icon: 'keyboard',      color: '#8b5cf6', desc: t('action.keyboardDesc') },
     shell:           { label: t('action.shell'),           icon: 'shell',         color: '#10b981', desc: t('action.shellDesc') },
     system:          { label: t('action.system'),          icon: 'system',        color: '#f59e0b', desc: t('action.systemDesc') },
-    'if-else':       { label: t('action.ifElse'),          icon: 'if_else',       color: '#ec4899', desc: t('action.ifElseDesc') },
-    loop:            { label: t('action.loop'),            icon: 'loop',          color: '#06b6d4', desc: t('action.loopDesc') },
-    wait:            { label: t('action.wait'),            icon: 'wait',          color: '#84cc16', desc: t('action.waitDesc') },
-    'set-var':       { label: t('action.setVar'),          icon: 'set_var',       color: '#a78bfa', desc: t('action.setVarDesc') },
+    link:            { label: t('action.link'),            icon: 'action_link',   color: '#06b6d4', desc: t('action.linkDesc') },
+    'mouse-move':    { label: t('action.mouseMove'),       icon: 'mouse_move',    color: '#8b5cf6', desc: t('action.mouseMoveDesc') },
+    'mouse-click':   { label: t('action.mouseClick'),      icon: 'mouse_click',   color: '#8b5cf6', desc: t('action.mouseClickDesc') },
+    'if-else':       { label: t('action.ifElse'),          icon: 'if_else',       color: '#2dd4bf', desc: t('action.ifElseDesc') },
+    loop:            { label: t('action.loop'),            icon: 'loop',          color: '#2dd4bf', desc: t('action.loopDesc') },
+    wait:            { label: t('action.wait'),            icon: 'wait',          color: '#5eead4', desc: t('action.waitDesc') },
+    'set-var':       { label: t('action.setVar'),          icon: 'variable',      color: '#f472b6', desc: t('action.setVarDesc') },
+    list:            { label: t('action.list'),            icon: 'list_alt',      color: '#f472b6', desc: t('action.listDesc') },
+    dict:            { label: t('action.dict'),            icon: 'data_object',   color: '#f472b6', desc: t('action.dictDesc') },
     toast:           { label: t('action.toast'),           icon: 'toast',         color: '#fb923c', desc: t('action.toastDesc') },
     'run-shortcut':  { label: t('action.runShortcut'),     icon: 'call_shortcut', color: '#22d3ee', desc: t('action.runShortcutDesc') },
-    escape:          { label: t('action.escape'),          icon: 'exit_to_app',   color: '#f59e0b', desc: t('action.escapeDesc') },
-    stop:            { label: t('action.stop'),            icon: 'stop',          color: '#ef4444', desc: t('action.stopDesc') },
+    escape:          { label: t('action.escape'),          icon: 'exit_to_app',   color: '#5eead4', desc: t('action.escapeDesc') },
+    stop:            { label: t('action.stop'),            icon: 'stop',          color: '#5eead4', desc: t('action.stopDesc') },
     calculate:       { label: t('action.calculate'),       icon: 'calculate',     color: '#10b981', desc: t('action.calculateDesc') },
     comment:         { label: t('action.comment'),         icon: 'comment',       color: '#6b7280', desc: t('action.commentDesc') },
-    sequence:        { label: t('action.sequence'),        icon: 'all_inclusive', color: '#f472b6', desc: t('action.sequenceDesc') },
+    sequence:        { label: t('action.sequence'),        icon: 'all_inclusive', color: '#2dd4bf', desc: t('action.sequenceDesc') },
   }
 }
 
@@ -246,8 +256,25 @@ const PICKER_BTN = 36
 const PICKER_GAP = 6
 const PICKER_COLS = 5
 
-const ACTION_TYPES  = ['launch', 'shortcut', 'shell', 'system']
-const SCRIPT_TYPES  = ['if-else', 'loop', 'sequence', 'wait', 'set-var', 'toast', 'run-shortcut', 'escape', 'stop', 'calculate', 'comment']
+const ACTION_TYPES  = ['launch', 'keyboard', 'shell', 'system', 'link', 'mouse-move', 'mouse-click']
+const SCRIPT_TYPES  = ['if-else', 'loop', 'sequence', 'wait', 'set-var', 'list', 'dict', 'toast', 'run-shortcut', 'escape', 'stop', 'calculate', 'comment']
+
+// ── Subcategory definitions ──────────────────────────────────────────────────
+interface SubCategory {
+  labelKey: string  // i18n key
+  types: string[]
+}
+
+const ACTION_SUBCATEGORIES: SubCategory[] = [
+  { labelKey: 'palette.sub.controls', types: ['keyboard', 'mouse-click', 'mouse-move'] },
+  { labelKey: 'palette.sub.system',   types: ['launch', 'link', 'shell', 'system'] },
+]
+
+const SCRIPT_SUBCATEGORIES: SubCategory[] = [
+  { labelKey: 'palette.sub.flow',    types: ['if-else', 'loop', 'sequence', 'escape', 'stop', 'wait'] },
+  { labelKey: 'palette.sub.data',    types: ['set-var', 'list', 'dict'] },
+  { labelKey: 'palette.sub.utility', types: ['toast', 'run-shortcut', 'calculate', 'comment'] },
+]
 
 function generateNodeId(): string {
   return Math.random().toString(36).slice(2, 10)
@@ -386,26 +413,415 @@ function ShortcutRecorder({ value, onChange }: ShortcutRecorderProps): JSX.Eleme
   )
 }
 
+// ── ShortcutVariableInput — key recording + variable context menu ──────────────
+
+function ShortcutVariableInput({
+  value,
+  onChange,
+  availableVars,
+  availableVarInfos,
+  nodeIndex,
+  style: styleProp,
+}: {
+  value: string
+  onChange: (keys: string) => void
+  availableVars: string[]
+  availableVarInfos?: VarInfo[]
+  nodeIndex?: number
+  style?: React.CSSProperties
+}): JSX.Element {
+  const t = useT()
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const { requestPick, resolveReturnValueMeta } = useContext(ReturnValuePickerContext)
+  const loopInsert = useContext(LoopInsertContext)
+
+  const { dragState: valueDrag, setForbiddenTooltip } = useContext(ValueDragContext)
+  const [recording, setRecording] = useState(false)
+  const pendingRef = useRef(value)
+  const [pendingDisplay, setPendingDisplay] = useState(value)
+  const [dragOver, setDragOver] = useState(false)
+
+  // Custom context menu state
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
+  const [menuClamped, setMenuClamped] = useState(false)
+  const [submenuOpen, setSubmenuOpen] = useState(false)
+  const [submenuClamped, setSubmenuClamped] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const submenuRef = useRef<HTMLDivElement>(null)
+  const varSubmenuRef = useRef<HTMLDivElement>(null)
+  const [varSubmenuRect, setVarSubmenuRect] = useState<DOMRect | null>(null)
+  const triggerRectRef = useRef<DOMRect | null>(null)
+
+  const varInfos: VarInfo[] = useMemo(() => {
+    if (availableVarInfos && availableVarInfos.length > 0) return availableVarInfos
+    return availableVars.map(name => ({ name, sourceType: 'set-var' }))
+  }, [availableVars, availableVarInfos])
+
+  const isVarRef = /^\$\w+$/.test(value.trim())
+
+  // Value drag-and-drop
+  const isDropAllowed = valueDrag.active && nodeIndex !== undefined && valueDrag.definedAtIndex < nodeIndex
+  const isDropForbidden = valueDrag.active && nodeIndex !== undefined && valueDrag.definedAtIndex >= nodeIndex
+  const handleNativeDragOver = useCallback((e: React.DragEvent) => {
+    if (!valueDrag.active) return
+    if (isDropAllowed) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; setDragOver(true); setForbiddenTooltip({ x: 0, y: 0, visible: false }) }
+    else if (isDropForbidden) { e.dataTransfer.dropEffect = 'none'; setDragOver(false); setForbiddenTooltip({ x: e.clientX, y: e.clientY, visible: true }) }
+  }, [valueDrag.active, isDropAllowed, isDropForbidden, setForbiddenTooltip])
+  const handleNativeDragLeave = useCallback(() => { setDragOver(false); setForbiddenTooltip({ x: 0, y: 0, visible: false }) }, [setForbiddenTooltip])
+  const handleNativeDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault(); setDragOver(false); setForbiddenTooltip({ x: 0, y: 0, visible: false })
+    if (isDropAllowed) onChange(valueDrag.ref)
+  }, [isDropAllowed, valueDrag.ref, onChange, setForbiddenTooltip])
+  const dropTargetProps = { onDragOver: handleNativeDragOver, onDragLeave: handleNativeDragLeave, onDrop: handleNativeDrop }
+
+  // Key recording
+  useEffect(() => {
+    if (!recording) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.isComposing) return
+      if (e.key === 'Escape') {
+        e.preventDefault(); e.stopPropagation()
+        pendingRef.current = value; setPendingDisplay(value)
+        setRecording(false)
+        return
+      }
+      e.preventDefault(); e.stopPropagation()
+      const combo = buildKeyCombo(e)
+      if (combo) {
+        pendingRef.current = combo; setPendingDisplay(combo)
+        onChange(combo)
+        setRecording(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown, { capture: true })
+    return () => window.removeEventListener('keydown', handleKeyDown, { capture: true })
+  }, [recording, value, onChange])
+
+  // Close menu on outside click or Escape
+  useEffect(() => {
+    if (!menuOpen) return
+    const handleClick = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node) &&
+          (!submenuRef.current || !submenuRef.current.contains(e.target as Node))) {
+        setMenuOpen(false); setSubmenuOpen(false)
+      }
+    }
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setMenuOpen(false); setSubmenuOpen(false) }
+    }
+    document.addEventListener('mousedown', handleClick, true)
+    document.addEventListener('keydown', handleKey)
+    return () => { document.removeEventListener('mousedown', handleClick, true); document.removeEventListener('keydown', handleKey) }
+  }, [menuOpen])
+
+  // Clamp menu to viewport; flip above input if no room below
+  useLayoutEffect(() => {
+    if (menuOpen && menuRef.current) {
+      const menuRect = menuRef.current.getBoundingClientRect()
+      const tRect = triggerRectRef.current
+      setMenuPos(prev => {
+        let { top, left } = prev
+        if (tRect && top + menuRect.height > window.innerHeight - 8) {
+          const aboveTop = tRect.top - menuRect.height - 4
+          if (aboveTop >= 8) top = aboveTop
+        }
+        return clampMenuPosition(menuRef.current, { top, left })
+      })
+      setMenuClamped(true)
+    } else { setMenuClamped(false) }
+  }, [menuOpen])
+
+  // Clamp submenu to viewport
+  useLayoutEffect(() => {
+    if (submenuOpen && submenuRef.current && varSubmenuRect) {
+      const el = submenuRef.current
+      const rect = el.getBoundingClientRect()
+      let top = varSubmenuRect.top
+      let left = varSubmenuRect.right + 4
+      if (left + rect.width > window.innerWidth - 8) left = varSubmenuRect.left - rect.width - 4
+      if (top + rect.height > window.innerHeight - 8) top = window.innerHeight - rect.height - 8
+      if (left < 8) left = 8; if (top < 8) top = 8
+      el.style.top = `${top}px`; el.style.left = `${left}px`
+      setSubmenuClamped(true)
+    } else { setSubmenuClamped(false) }
+  }, [submenuOpen, varSubmenuRect])
+
+  const closeMenu = useCallback(() => { setMenuOpen(false); setSubmenuOpen(false) }, [])
+
+  const handleSelect = useCallback((id: string) => {
+    closeMenu()
+    if (id === '__record') {
+      pendingRef.current = value; setPendingDisplay(value); setRecording(true)
+    } else if (id === '__return_value') {
+      requestPick(nodeIndex ?? Infinity, (ref: string) => onChange(ref))
+    } else if (id.startsWith('var:')) {
+      onChange(`$${id.slice(4)}`)
+    } else if (id.startsWith('loop:')) {
+      const parts = id.slice(5); const sepIdx = parts.indexOf(':')
+      const optVarName = parts.slice(0, sepIdx); const optValue = parts.slice(sepIdx + 1)
+      if (loopInsert.directRef) { onChange(optValue) }
+      else { loopInsert.insertSetVar(optVarName, optValue); onChange(`$${optVarName}`) }
+    }
+  }, [closeMenu, value, requestPick, onChange, nodeIndex, loopInsert])
+
+  const handleButtonClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (recording) return
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    triggerRectRef.current = rect
+    setMenuPos({ top: rect.bottom + 4, left: rect.left })
+    setSubmenuOpen(false)
+    setMenuOpen(true)
+  }, [recording])
+
+  const menuContainerStyle: React.CSSProperties = {
+    position: 'fixed', zIndex: 99999,
+    background: 'var(--c-elevated, #1e1e2e)', border: '1px solid var(--c-border, #333)',
+    borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.45)',
+    padding: '4px 0', minWidth: 150, overflow: 'hidden',
+  }
+  const menuItemStyle = (color?: string): React.CSSProperties => ({
+    padding: '5px 10px', fontSize: 12, cursor: 'pointer',
+    display: 'flex', alignItems: 'center', gap: 7,
+    color: color || 'var(--c-text, #e0e0e0)', background: 'transparent',
+    borderRadius: 4, margin: '1px 4px', whiteSpace: 'nowrap',
+    fontWeight: 500, transition: 'background 0.08s',
+  })
+  const hoverOn = (e: React.MouseEvent) => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.14)' }
+  const hoverOff = (e: React.MouseEvent) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }
+
+  const renderMenu = () => {
+    if (!menuOpen) return null
+    return createPortal(
+      <>
+        <div ref={menuRef} data-no-dnd="true"
+          style={{ ...menuContainerStyle, top: menuPos.top, left: menuPos.left, visibility: menuClamped ? 'visible' : 'hidden' }}>
+          {/* Loop options */}
+          {loopInsert.options.map(opt => (
+            <div key={`loop:${opt.varName}:${opt.value}`}
+              onClick={() => handleSelect(`loop:${opt.varName}:${opt.value}`)}
+              style={menuItemStyle('#06b6d4')} onMouseOver={hoverOn} onMouseOut={hoverOff}>
+              <UIIcon name="loop" size={14} /><span>{opt.label}</span>
+            </div>
+          ))}
+          {loopInsert.options.length > 0 && (
+            <div style={{ height: 1, background: 'var(--c-border-sub, #333)', margin: '4px 0' }} />
+          )}
+
+          {/* Record keyboard shortcut */}
+          <div onClick={() => handleSelect('__record')}
+            style={menuItemStyle()} onMouseOver={hoverOn} onMouseOut={hoverOff}>
+            <UIIcon name="keyboard" size={14} /><span>{t('recorder.clickToRecord')}</span>
+          </div>
+
+          {/* Variable select (click to open submenu) */}
+          {varInfos.length > 0 && (
+            <div ref={varSubmenuRef}
+              onClick={e => { setVarSubmenuRect((e.currentTarget as HTMLElement).getBoundingClientRect()); setSubmenuOpen(prev => !prev) }}
+              onMouseOver={hoverOn}
+              onMouseOut={e => { if (!submenuOpen) hoverOff(e) }}
+              style={{ ...menuItemStyle('#a78bfa'), background: submenuOpen ? 'rgba(255,255,255,0.14)' : 'transparent' }}>
+              <UIIcon name="variable" size={14} />
+              <span style={{ flex: 1 }}>변수 선택</span>
+              <span style={{ fontSize: 10, opacity: 0.5, marginLeft: 4 }}>▸</span>
+            </div>
+          )}
+
+          {/* Return value select */}
+          <div onClick={() => { handleSelect('__return_value'); setSubmenuOpen(false) }}
+            style={menuItemStyle('#f59e0b')} onMouseOver={hoverOn} onMouseOut={hoverOff}>
+            <UIIcon name="output" size={14} /><span>반환값 선택</span>
+          </div>
+        </div>
+
+        {/* Variable submenu */}
+        {submenuOpen && varInfos.length > 0 && varSubmenuRect && (
+          <div ref={submenuRef} data-no-dnd="true"
+            style={{ ...menuContainerStyle, top: varSubmenuRect.top, left: varSubmenuRect.right + 4, maxHeight: 240, overflowY: 'auto', visibility: submenuClamped ? 'visible' : 'hidden' }}>
+            {varInfos.map(v => (
+              <div key={`var:${v.name}`} onClick={() => handleSelect(`var:${v.name}`)}
+                style={menuItemStyle(getSourceColor(v.sourceType))} onMouseOver={hoverOn} onMouseOut={hoverOff}>
+                <UIIcon name={getSourceIcon(v.sourceType)} size={14} />
+                <span style={{ fontFamily: 'monospace' }}>{v.displayLabel ?? v.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </>,
+      document.body,
+    )
+  }
+
+  const baseStyle: React.CSSProperties = {
+    borderRadius: 6, color: 'var(--c-text)', padding: '4px 8px',
+    fontSize: 12, fontFamily: 'inherit', outline: 'none',
+    boxSizing: 'border-box' as const,
+    ...styleProp,
+    ...(recording ? {
+      background: 'rgba(239,68,68,0.08)', border: '1px solid #ef4444',
+    } : {
+      background: 'var(--c-accent-bg)', border: '1px solid var(--c-accent-border)',
+    }),
+    ...(valueDrag.active ? {
+      border: dragOver && isDropAllowed ? '1.5px solid #3b82f6' : '1px solid rgba(59,130,246,0.45)',
+      background: dragOver && isDropAllowed ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.06)',
+      color: '#60a5fa', transition: 'all 0.12s',
+    } : {}),
+  }
+
+  // Variable chip display
+  if (isVarRef) {
+    const varName = value.trim().slice(1)
+    const rvMeta = resolveReturnValueMeta(value.trim())
+    const matchedVar = varInfos.find(v => v.name === varName)
+    const chipEl = rvMeta ? (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 6, background: `${rvMeta.color}18`, color: rvMeta.color, fontSize: 11, fontFamily: 'monospace', lineHeight: '1.6', cursor: 'pointer' }}>
+        <UIIcon name={rvMeta.icon} size={12} />{rvMeta.label}
+      </span>
+    ) : (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 6, background: `${getSourceColor(matchedVar?.sourceType ?? 'set-var')}18`, color: getSourceColor(matchedVar?.sourceType ?? 'set-var'), fontSize: 11, fontFamily: 'monospace', lineHeight: '1.6', cursor: 'pointer' }}>
+        <UIIcon name={getSourceIcon(matchedVar?.sourceType ?? 'set-var')} size={12} />{varName}
+      </span>
+    )
+    return (<><div onClick={handleButtonClick} data-no-dnd="true" {...dropTargetProps} style={{
+      display: 'inline-flex', alignItems: 'center', borderRadius: 6,
+      background: 'var(--c-accent-bg)', border: '1px solid var(--c-accent-border)', padding: '2px 4px',
+      ...styleProp,
+      ...(valueDrag.active ? { border: dragOver && isDropAllowed ? '1.5px solid #3b82f6' : '1px solid rgba(59,130,246,0.35)', background: dragOver && isDropAllowed ? 'rgba(59,130,246,0.12)' : 'rgba(59,130,246,0.04)', transition: 'all 0.12s' } : {}),
+    }}>{chipEl}</div>{renderMenu()}</>)
+  }
+
+  return (
+    <>
+      {recording && <style>{`@keyframes recorder-pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.3)}50%{box-shadow:0 0 0 4px rgba(239,68,68,0)}}`}</style>}
+      <button ref={btnRef} onClick={handleButtonClick} data-no-dnd="true" {...dropTargetProps} style={{
+        ...baseStyle, cursor: 'pointer', textAlign: 'left', display: 'inline-flex',
+        alignItems: 'center', gap: 4, overflow: 'hidden', minHeight: 26,
+        ...(recording ? { animation: 'recorder-pulse 1.2s ease-in-out infinite', color: '#ef4444' } : {}),
+      }}>
+        {recording ? (
+          <><span style={{ fontSize: 8, lineHeight: 1, flexShrink: 0 }}>●</span><span>{pendingDisplay || t('recorder.recording')}</span></>
+        ) : value ? (
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>{value}</span>
+        ) : null}
+      </button>
+      {renderMenu()}
+    </>
+  )
+}
+
 // ── NestedActionList — action list with DnD drop zone support ────────────────
 
 function makeDefaultAction(type: string, extraData?: { shortcutId?: string }): ActionConfig {
   switch (type) {
     case 'launch':        return { type: 'launch', target: '' }
-    case 'shortcut':      return { type: 'shortcut', keys: '' }
+    case 'keyboard':      return { type: 'keyboard', keys: '' }
     case 'shell':         return { type: 'shell', command: '' }
-    case 'wait':          return { type: 'wait', ms: 500 }
-    case 'set-var':       return { type: 'set-var', name: '', value: '', scope: 'local' }
+    case 'wait':          return { type: 'wait', ms: 0 }
+    case 'set-var':       return { type: 'set-var', name: '', value: '' }
+    case 'list':          return { type: 'list', name: '', mode: 'define', listItems: [] } as ActionConfig
+    case 'dict':          return { type: 'dict', name: '', mode: 'define', dictItems: [] } as ActionConfig
     case 'toast':         return { type: 'toast', message: '' }
-    case 'if-else':       return { type: 'if-else', condition: '', matchLogic: 'all', criteria: [{ variable: '', operator: 'eq' as ConditionOperator, value: '' }], thenActions: [], elseActions: [] }
-    case 'loop':          return { type: 'loop', mode: 'repeat' as LoopMode, count: 3, body: [] }
+    case 'if-else':       return { type: 'if-else', condition: '', matchLogic: 'all', criteria: [{ variable: '', operator: 'eq' as ConditionOperator, value: '' }], thenActions: [], elseActions: [], switchDefault: [] }
+    case 'loop':          return { type: 'loop', mode: 'repeat' as LoopMode, count: 0, body: [] }
     case 'run-shortcut': return { type: 'run-shortcut', shortcutId: extraData?.shortcutId ?? '' }
     case 'escape':        return { type: 'escape' }
     case 'stop':          return { type: 'stop' }
-    case 'calculate':     return { type: 'calculate', operation: 'add' as CalcOperation, operandA: '', operandB: '', resultVar: 'result', scope: 'local' }
+    case 'calculate':     return { type: 'calculate', operation: 'add' as CalcOperation, operandA: '', operandB: '', resultVar: '', scope: 'local' }
     case 'comment':       return { type: 'comment', text: '' }
     case 'sequence':      return { type: 'sequence', name: '', body: [], showProgress: true }
+    case 'link':          return { type: 'link', url: '' }
+    case 'mouse-move':    return { type: 'mouse-move', mode: 'set', x: '', y: '' }
+    case 'mouse-click':   return { type: 'mouse-click', button: 'left' }
     default:              return { type: 'system', action: 'volume-up' as SystemActionId }
   }
+}
+
+// ── Branch tree navigation helpers (support arbitrary nesting depth) ──
+
+function getBranchActionsFromAction(action: ActionConfig, branchType: string): ActionConfig[] | null {
+  if (action.type === 'if-else') {
+    const a = action as IfElseAction
+    if (branchType === 'then') return a.thenActions
+    if (branchType === 'else') return a.elseActions
+    if (branchType === 'default') return a.switchDefault ?? []
+    const caseMatch = branchType.match(/^case-(\d+)$/)
+    if (caseMatch) {
+      const idx = parseInt(caseMatch[1], 10)
+      return a.switchCases?.[idx]?.actions ?? null
+    }
+  }
+  if (action.type === 'loop' && branchType === 'loop') return (action as LoopAction).body
+  if (action.type === 'sequence' && branchType === 'sequence') return (action as SequenceAction).body
+  return null
+}
+
+function setBranchActionsOnAction(action: ActionConfig, branchType: string, newActions: ActionConfig[]): ActionConfig {
+  if (action.type === 'if-else') {
+    const a = action as IfElseAction
+    if (branchType === 'then') return { ...a, thenActions: newActions }
+    if (branchType === 'else') return { ...a, elseActions: newActions }
+    if (branchType === 'default') return { ...a, switchDefault: newActions }
+    const caseMatch = branchType.match(/^case-(\d+)$/)
+    if (caseMatch) {
+      const idx = parseInt(caseMatch[1], 10)
+      const cases = [...(a.switchCases ?? [])]
+      if (idx < cases.length) cases[idx] = { ...cases[idx], actions: newActions }
+      return { ...a, switchCases: cases }
+    }
+  }
+  if (action.type === 'loop' && branchType === 'loop') return { ...(action as LoopAction), body: newActions }
+  if (action.type === 'sequence' && branchType === 'sequence') return { ...(action as SequenceAction), body: newActions }
+  return action
+}
+
+function modifyActionAtPath(
+  action: ActionConfig,
+  segments: string[],
+  transform: (actions: ActionConfig[]) => ActionConfig[]
+): ActionConfig | null {
+  if (segments.length === 0) return null
+  const branchType = segments[0]
+  if (segments.length === 1) {
+    const current = getBranchActionsFromAction(action, branchType)
+    if (!current) return null
+    return setBranchActionsOnAction(action, branchType, transform(current))
+  }
+  if (segments.length < 3) return null
+  const index = parseInt(segments[1], 10)
+  const rest = segments.slice(2)
+  const branchActions = getBranchActionsFromAction(action, branchType)
+  if (!branchActions || index >= branchActions.length) return null
+  const modifiedChild = modifyActionAtPath(branchActions[index], rest, transform)
+  if (!modifiedChild) return null
+  const newBranchActions = branchActions.map((a, i) => i === index ? modifiedChild : a)
+  return setBranchActionsOnAction(action, branchType, newBranchActions)
+}
+
+/** Navigate a path-based branchId and apply a transform to the target branch's action array. */
+function modifyBranch(
+  nodes: ActionNode[],
+  branchId: string,
+  transform: (actions: ActionConfig[]) => ActionConfig[]
+): ActionNode[] | null {
+  const withoutPrefix = branchId.slice(7) // remove "branch:"
+  const colonIdx = withoutPrefix.indexOf(':')
+  if (colonIdx === -1) return null
+  const nodeId = withoutPrefix.slice(0, colonIdx)
+  const segments = withoutPrefix.slice(colonIdx + 1).split(':')
+  const nodeIdx = nodes.findIndex(n => n._id === nodeId)
+  if (nodeIdx === -1) return null
+  const modifiedAction = modifyActionAtPath(nodes[nodeIdx].action, segments, transform)
+  if (!modifiedAction) return null
+  return nodes.map((n, i) => i === nodeIdx ? { ...n, action: modifiedAction } : n)
+}
+
+/** Extract the top-level nodeId from a path-based branchId. */
+function extractNodeIdFromBranchId(branchId: string): string {
+  const withoutPrefix = branchId.slice(7)
+  const colonIdx = withoutPrefix.indexOf(':')
+  return colonIdx === -1 ? withoutPrefix : withoutPrefix.slice(0, colonIdx)
 }
 
 interface NestedActionListProps {
@@ -417,9 +833,11 @@ interface NestedActionListProps {
   library: ShortcutEntry[]
   branchId?: string
   currentEntryId?: string
+  parentVars?: string[]
+  parentVarInfos?: VarInfo[]
 }
 
-function NestedActionList({ label, color, actions, onChange, nodeStyle, library, branchId, currentEntryId }: NestedActionListProps): JSX.Element {
+function NestedActionList({ label, color, actions, onChange, nodeStyle, library, branchId, currentEntryId, parentVars, parentVarInfos }: NestedActionListProps): JSX.Element {
   const fallbackId = useRef(`branch-noop-${Math.random().toString(36).slice(2, 6)}`).current
   const effectiveBranchId = branchId ?? fallbackId
   const { setNodeRef: setBranchDropRef, isOver: isBranchOver } = useDroppable({ id: effectiveBranchId })
@@ -484,6 +902,9 @@ function NestedActionList({ label, color, actions, onChange, nodeStyle, library,
                   onDelete={() => deleteAction(idx)}
                   currentEntryId={currentEntryId}
                   depth={0}
+                  nestedPath={`${effectiveBranchId}:${idx}`}
+                  availableVars={parentVars}
+                  availableVarInfos={parentVarInfos}
                 />
               ))}
             </div>
@@ -496,12 +917,15 @@ function NestedActionList({ label, color, actions, onChange, nodeStyle, library,
 
 // ── ConditionInlineFields — match logic + criteria list for if-else header ──────
 
-function ConditionInlineFields({ action, onChange, availableVars }: {
+function ConditionInlineFields({ action, onChange, availableVars, availableVarInfos, nodeIndex }: {
   action: IfElseAction
   onChange: (a: ActionConfig) => void
   availableVars?: string[]
+  availableVarInfos?: VarInfo[]
+  nodeIndex?: number
 }): JSX.Element {
   const t = useT()
+  const conditionMode: ConditionMode = action.conditionMode ?? 'if-else'
   const matchLogic: ConditionMatchLogic = action.matchLogic ?? 'all'
   const criteria: ConditionCriteria[] = action.criteria ?? [{ variable: '', operator: 'eq', value: '' }]
 
@@ -521,7 +945,7 @@ function ConditionInlineFields({ action, onChange, availableVars }: {
   const noValueOps = new Set<ConditionOperator>(['is-empty', 'is-not-empty'])
 
   const inp: React.CSSProperties = {
-    background: 'var(--c-input-bg)',
+    background: 'var(--c-surface)',
     border: '1px solid var(--c-border)',
     borderRadius: 5,
     color: 'var(--c-text)',
@@ -531,56 +955,164 @@ function ConditionInlineFields({ action, onChange, availableVars }: {
     outline: 'none',
     boxSizing: 'border-box',
   }
+  const inpField: React.CSSProperties = {
+    ...inp,
+    background: 'var(--c-accent-bg)',
+    border: '1px solid var(--c-accent-border)',
+  }
 
   const updateCriteria = (newCriteria: ConditionCriteria[]) =>
     onChange({ ...action, criteria: newCriteria })
 
+  const handleModeChange = (newMode: ConditionMode) => {
+    if (newMode === conditionMode) return
+    if (newMode === 'switch') {
+      onChange({ ...action, conditionMode: 'switch', switchValue: '', switchCases: [{ value: '', actions: [] }], switchDefault: [] })
+    } else {
+      onChange({ ...action, conditionMode: 'if-else', matchLogic: 'all', criteria: [{ variable: '', operator: 'eq', value: '' }], thenActions: [], elseActions: [] })
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 220 }}>
-      {/* Row 1: Match All / Any */}
+      {/* Row 0: Mode selector + switch value (or match logic) */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>{t('script.matchLogicPrefix')}</span>
-        <select
-          value={matchLogic}
-          onChange={(e) => onChange({ ...action, matchLogic: e.target.value as ConditionMatchLogic })}
-          style={{ ...inp, minWidth: 68 }}
-        >
-          <option value="all">{t('script.matchAll')}</option>
-          <option value="any">{t('script.matchAny')}</option>
-        </select>
+        <CustomSelect
+          value={conditionMode}
+          onChange={(v) => handleModeChange(v as ConditionMode)}
+          options={[
+            { value: 'if-else', label: t('script.conditionModeIfElse') },
+            { value: 'switch', label: t('script.conditionModeSwitch') },
+          ]}
+          style={{ ...inp, minWidth: 90 }}
+        />
+        {conditionMode === 'if-else' ? (
+          <>
+            <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>{t('script.matchLogicPrefix')}</span>
+            <CustomSelect
+              value={matchLogic}
+              onChange={(v) => onChange({ ...action, matchLogic: v as ConditionMatchLogic })}
+              options={[
+                { value: 'all', label: t('script.matchAll') },
+                { value: 'any', label: t('script.matchAny') },
+              ]}
+              style={{ ...inp, minWidth: 68 }}
+            />
+          </>
+        ) : (
+          <VariableInput
+            value={action.switchValue ?? ''}
+            onChange={(v) => onChange({ ...action, switchValue: v })}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            style={{ ...inpField, flex: 1, minWidth: 100 }}
+          />
+        )}
       </div>
 
-      {/* Criteria rows */}
-      {criteria.map((crit, idx) => (
+      {conditionMode === 'if-else' ? (
+        <>
+          {/* Criteria rows */}
+          {criteria.map((crit, idx) => (
+            <div key={idx}>
+              <div style={{ height: 1, background: 'var(--c-border)', margin: '2px 0', opacity: 0.5 }} />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', paddingTop: 2 }}>
+                <VariableInput
+                  value={crit.variable}
+                  onChange={(v) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, variable: v } : c))}
+                  availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+                  style={{ ...inpField, minWidth: 90 }}
+                />
+                <CustomSelect
+                  value={crit.operator}
+                  onChange={(v) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, operator: v as ConditionOperator } : c))}
+                  options={OPERATORS.map((op) => ({ value: op.value, label: op.label }))}
+                  style={{ ...inp, minWidth: 88 }}
+                />
+                {!noValueOps.has(crit.operator) && (
+                  <VariableInput
+                    value={crit.value}
+                    onChange={(v) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, value: v } : c))}
+                    availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+                    style={{ ...inpField, minWidth: 80 }}
+                  />
+                )}
+                {criteria.length > 1 && (
+                  <button
+                    onClick={() => updateCriteria(criteria.filter((_, i) => i !== idx))}
+                    style={{ background: 'none', border: 'none', color: 'var(--c-text-dim)', cursor: 'pointer', padding: '0 2px', borderRadius: 3, display: 'flex', alignItems: 'center' }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#ef4444' }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-text-dim)' }}
+                  ><UIIcon name="close" size={11} /></button>
+                )}
+              </div>
+            </div>
+          ))}
+
+          {/* Add criteria */}
+          <button
+            onClick={() => updateCriteria([...criteria, { variable: '', operator: 'eq', value: '' }])}
+            style={{ background: 'none', border: 'none', color: 'var(--c-text-dim)', fontSize: 11, cursor: 'pointer', textAlign: 'left', padding: '2px 0', fontFamily: 'inherit' }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-accent)' }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-text-dim)' }}
+          >
+            {t('script.addCriteria')}
+          </button>
+        </>
+      ) : (
+        /* Switch mode: case value list below divider */
+        <SwitchCaseValueList action={action} onChange={onChange} availableVars={availableVars} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} />
+      )}
+    </div>
+  )
+}
+
+// ── SwitchCaseValueList — editable case value rows for switch mode ──────────────
+
+function SwitchCaseValueList({ action, onChange, availableVars, availableVarInfos, nodeIndex }: {
+  action: IfElseAction
+  onChange: (a: ActionConfig) => void
+  availableVars?: string[]
+  availableVarInfos?: VarInfo[]
+  nodeIndex?: number
+}): JSX.Element {
+  const t = useT()
+  const switchCases: SwitchCase[] = action.switchCases ?? [{ value: '', actions: [] }]
+
+  const inpField: React.CSSProperties = {
+    background: 'var(--c-accent-bg)',
+    border: '1px solid var(--c-accent-border)',
+    borderRadius: 5,
+    color: 'var(--c-text)',
+    padding: '3px 6px',
+    fontSize: 11,
+    fontFamily: 'inherit',
+    outline: 'none',
+    boxSizing: 'border-box',
+  }
+
+  const updateCaseValue = (idx: number, value: string) => {
+    onChange({ ...action, switchCases: switchCases.map((c, i) => i === idx ? { ...c, value } : c) })
+  }
+  const deleteCase = (idx: number) => {
+    onChange({ ...action, switchCases: switchCases.filter((_, i) => i !== idx) })
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {switchCases.map((sc, idx) => (
         <div key={idx}>
           <div style={{ height: 1, background: 'var(--c-border)', margin: '2px 0', opacity: 0.5 }} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', paddingTop: 2 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, paddingTop: 2 }}>
+            <span style={{ fontSize: 10, color: 'var(--c-text-dim)', flexShrink: 0, fontWeight: 600, letterSpacing: '0.04em' }}>{t('script.caseLabel')}</span>
             <VariableInput
-              value={crit.variable}
-              onChange={(v) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, variable: v } : c))}
-              availableVars={availableVars ?? []}
-              placeholder={t('script.conditionVar')}
-              style={{ ...inp, width: 90 }}
+              value={sc.value}
+              onChange={(v) => updateCaseValue(idx, v)}
+              availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+              style={{ ...inpField, flex: 1, minWidth: 60 }}
             />
-            <select
-              value={crit.operator}
-              onChange={(e) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, operator: e.target.value as ConditionOperator } : c))}
-              style={{ ...inp, minWidth: 88 }}
-            >
-              {OPERATORS.map((op) => <option key={op.value} value={op.value}>{op.label}</option>)}
-            </select>
-            {!noValueOps.has(crit.operator) && (
-              <VariableInput
-                value={crit.value}
-                onChange={(v) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, value: v } : c))}
-                availableVars={availableVars ?? []}
-                placeholder={t('script.conditionVal')}
-                style={{ ...inp, width: 80 }}
-              />
-            )}
-            {criteria.length > 1 && (
+            {switchCases.length > 1 && (
               <button
-                onClick={() => updateCriteria(criteria.filter((_, i) => i !== idx))}
+                onClick={() => deleteCase(idx)}
                 style={{ background: 'none', border: 'none', color: 'var(--c-text-dim)', cursor: 'pointer', padding: '0 2px', borderRadius: 3, display: 'flex', alignItems: 'center' }}
                 onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#ef4444' }}
                 onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-text-dim)' }}
@@ -589,30 +1121,29 @@ function ConditionInlineFields({ action, onChange, availableVars }: {
           </div>
         </div>
       ))}
-
-      {/* Add criteria */}
       <button
-        onClick={() => updateCriteria([...criteria, { variable: '', operator: 'eq', value: '' }])}
+        onClick={() => onChange({ ...action, switchCases: [...switchCases, { value: '', actions: [] }] })}
         style={{ background: 'none', border: 'none', color: 'var(--c-text-dim)', fontSize: 11, cursor: 'pointer', textAlign: 'left', padding: '2px 0', fontFamily: 'inherit' }}
         onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-accent)' }}
         onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-text-dim)' }}
       >
-        {t('script.addCriteria')}
+        {t('script.addCase')}
       </button>
     </div>
   )
 }
 
-// ── ConditionMatchSelect — just the Match All/Any dropdown (for header row) ──────
+// ── ConditionModeSelect — mode + match logic dropdown (for header row) ──────
 
-function ConditionMatchSelect({ action, onChange }: {
+function ConditionModeSelect({ action, onChange }: {
   action: IfElseAction
   onChange: (a: ActionConfig) => void
 }): JSX.Element {
   const t = useT()
+  const conditionMode: ConditionMode = action.conditionMode ?? 'if-else'
   const matchLogic: ConditionMatchLogic = action.matchLogic ?? 'all'
   const inp: React.CSSProperties = {
-    background: 'var(--c-input-bg)',
+    background: 'var(--c-surface)',
     border: '1px solid var(--c-border)',
     borderRadius: 5,
     color: 'var(--c-text)',
@@ -622,28 +1153,119 @@ function ConditionMatchSelect({ action, onChange }: {
     outline: 'none',
     boxSizing: 'border-box',
   }
+
+  const handleModeChange = (newMode: ConditionMode) => {
+    if (newMode === conditionMode) return
+    if (newMode === 'switch') {
+      onChange({ ...action, conditionMode: 'switch', switchValue: '', switchCases: [{ value: '', actions: [] }], switchDefault: [] })
+    } else {
+      onChange({ ...action, conditionMode: 'if-else', matchLogic: 'all', criteria: [{ variable: '', operator: 'eq', value: '' }], thenActions: [], elseActions: [] })
+    }
+  }
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-      <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>{t('script.matchLogicPrefix')}</span>
-      <select
-        value={matchLogic}
-        onChange={(e) => onChange({ ...action, matchLogic: e.target.value as ConditionMatchLogic })}
-        style={{ ...inp, minWidth: 68 }}
-      >
-        <option value="all">{t('script.matchAll')}</option>
-        <option value="any">{t('script.matchAny')}</option>
-      </select>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, justifyContent: 'flex-end' }}>
+      <CustomSelect
+        value={conditionMode}
+        onChange={(v) => handleModeChange(v as ConditionMode)}
+        options={[
+          { value: 'if-else', label: t('script.conditionModeIfElse') },
+          { value: 'switch', label: t('script.conditionModeSwitch') },
+        ]}
+        style={{ ...inp, minWidth: 80 }}
+      />
+      {conditionMode === 'if-else' ? (
+        <>
+          <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>{t('script.matchLogicPrefix')}</span>
+          <CustomSelect
+            value={matchLogic}
+            onChange={(v) => onChange({ ...action, matchLogic: v as ConditionMatchLogic })}
+            options={[
+              { value: 'all', label: t('script.matchAll') },
+              { value: 'any', label: t('script.matchAny') },
+            ]}
+            style={{ ...inp, minWidth: 68 }}
+          />
+        </>
+      ) : (
+        <input
+          value={action.switchValue ?? ''}
+          onChange={(e) => onChange({ ...action, switchValue: e.target.value })}
+          style={{ ...inp, flex: 1, minWidth: 60, background: 'var(--c-accent-bg)', border: '1px solid var(--c-accent-border)' }}
+        />
+      )}
     </div>
   )
 }
 
 // ── ConditionCriteriaSection — criteria rows + add button (below header divider) ─
 
-function ConditionCriteriaSection({ action, onChange }: {
+function ConditionCriteriaSection({ action, onChange, availableVars, availableVarInfos, nodeIndex }: {
   action: IfElseAction
   onChange: (a: ActionConfig) => void
+  availableVars?: string[]
+  availableVarInfos?: VarInfo[]
+  nodeIndex?: number
 }): JSX.Element {
   const t = useT()
+  const conditionMode: ConditionMode = action.conditionMode ?? 'if-else'
+
+  if (conditionMode === 'switch') {
+    // Switch mode: show case value list
+    const switchCases: SwitchCase[] = action.switchCases ?? [{ value: '', actions: [] }]
+    const inpField: React.CSSProperties = {
+      background: 'var(--c-accent-bg)',
+      border: '1px solid var(--c-accent-border)',
+      borderRadius: 5,
+      color: 'var(--c-text)',
+      padding: '3px 6px',
+      fontSize: 11,
+      fontFamily: 'inherit',
+      outline: 'none',
+      boxSizing: 'border-box',
+    }
+    const updateCaseValue = (idx: number, value: string) => {
+      onChange({ ...action, switchCases: switchCases.map((c, i) => i === idx ? { ...c, value } : c) })
+    }
+    const deleteCase = (idx: number) => {
+      onChange({ ...action, switchCases: switchCases.filter((_, i) => i !== idx) })
+    }
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 3, width: '100%' }}>
+        {switchCases.map((sc, idx) => (
+          <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}>
+            <span style={{ fontSize: 10, color: 'var(--c-text-dim)', flexShrink: 0, fontWeight: 600, letterSpacing: '0.04em' }}>{t('script.caseLabel')}</span>
+            <VariableInput
+              value={sc.value}
+              onChange={(v) => updateCaseValue(idx, v)}
+              availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+              style={{ ...inpField, flex: 1, minWidth: 60 }}
+            />
+            {switchCases.length > 1 && (
+              <button
+                onClick={() => deleteCase(idx)}
+                style={{ background: 'none', border: 'none', color: 'var(--c-text-dim)', cursor: 'pointer', padding: '0 2px', borderRadius: 3, display: 'flex', alignItems: 'center' }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#ef4444' }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-text-dim)' }}
+              ><UIIcon name="close" size={11} /></button>
+            )}
+          </div>
+        ))}
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button
+            onClick={() => onChange({ ...action, switchCases: [...switchCases, { value: '', actions: [] }] })}
+            style={{ background: 'none', border: 'none', color: 'var(--c-text-dim)', fontSize: 11, cursor: 'pointer', padding: '2px 0', fontFamily: 'inherit' }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-accent)' }}
+            onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-text-dim)' }}
+          >
+            {t('script.addCase')}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  // If-Else mode: show criteria rows (original behavior)
   const criteria: ConditionCriteria[] = action.criteria ?? [{ variable: '', operator: 'eq', value: '' }]
 
   const OPERATORS: { value: ConditionOperator; label: string }[] = [
@@ -662,7 +1284,7 @@ function ConditionCriteriaSection({ action, onChange }: {
   const noValueOps = new Set<ConditionOperator>(['is-empty', 'is-not-empty'])
 
   const inp: React.CSSProperties = {
-    background: 'var(--c-input-bg)',
+    background: 'var(--c-surface)',
     border: '1px solid var(--c-border)',
     borderRadius: 5,
     color: 'var(--c-text)',
@@ -671,6 +1293,11 @@ function ConditionCriteriaSection({ action, onChange }: {
     fontFamily: 'inherit',
     outline: 'none',
     boxSizing: 'border-box',
+  }
+  const inpField: React.CSSProperties = {
+    ...inp,
+    background: 'var(--c-accent-bg)',
+    border: '1px solid var(--c-accent-border)',
   }
 
   const updateCriteria = (newCriteria: ConditionCriteria[]) =>
@@ -680,25 +1307,24 @@ function ConditionCriteriaSection({ action, onChange }: {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 3, width: '100%' }}>
       {criteria.map((crit, idx) => (
         <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <input
+          <VariableInput
             value={crit.variable}
-            onChange={(e) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, variable: e.target.value } : c))}
-            placeholder={t('script.conditionVar')}
-            style={{ ...inp, width: 90 }}
+            onChange={(v) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, variable: v } : c))}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            style={{ ...inpField, minWidth: 90 }}
           />
-          <select
+          <CustomSelect
             value={crit.operator}
-            onChange={(e) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, operator: e.target.value as ConditionOperator } : c))}
+            onChange={(v) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, operator: v as ConditionOperator } : c))}
+            options={OPERATORS.map((op) => ({ value: op.value, label: op.label }))}
             style={{ ...inp, minWidth: 88 }}
-          >
-            {OPERATORS.map((op) => <option key={op.value} value={op.value}>{op.label}</option>)}
-          </select>
+          />
           {!noValueOps.has(crit.operator) && (
-            <input
+            <VariableInput
               value={crit.value}
-              onChange={(e) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, value: e.target.value } : c))}
-              placeholder={t('script.conditionVal')}
-              style={{ ...inp, width: 80 }}
+              onChange={(v) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, value: v } : c))}
+              availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+              style={{ ...inpField, minWidth: 80 }}
             />
           )}
           {criteria.length > 1 && (
@@ -737,6 +1363,81 @@ function ConditionBranchesExternal({ action, onChange, nodeStyle, library, nodeI
 }): JSX.Element {
   const t = useT()
   const color = nodeStyle['if-else']?.color ?? '#ec4899'
+  const conditionMode: ConditionMode = action.conditionMode ?? 'if-else'
+
+  if (conditionMode === 'switch') {
+    const switchCases: SwitchCase[] = action.switchCases ?? [{ value: '', actions: [] }]
+    const switchDefault: ActionConfig[] = action.switchDefault ?? []
+
+    const updateCase = (idx: number, updated: SwitchCase) => {
+      onChange({ ...action, switchCases: switchCases.map((c, i) => i === idx ? updated : c) })
+    }
+
+    return (
+      <div>
+        {/* Case branches — divider labels only (values edited in card above) */}
+        {switchCases.map((sc, idx) => (
+          <div key={idx}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6,
+              padding: '4px 0 2px 0',
+            }}>
+              <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.9, textTransform: 'uppercase', flexShrink: 0 }}>
+                {t('script.caseLabel')} {sc.value ? `"${sc.value}"` : `#${idx + 1}`}
+              </span>
+              <div style={{ flex: 1, height: 1, background: `${color}44` }} />
+            </div>
+            <NestedActionList
+              label=""
+              color={color}
+              actions={sc.actions}
+              onChange={(acts) => updateCase(idx, { ...sc, actions: acts })}
+              nodeStyle={nodeStyle}
+              library={library}
+              branchId={`branch:${nodeId}:case-${idx}`}
+              currentEntryId={currentEntryId}
+            />
+          </div>
+        ))}
+
+        {/* DEFAULT branch — always present */}
+        <div>
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '4px 0 2px 0',
+          }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: '#6b7280', letterSpacing: '0.08em', opacity: 0.9, textTransform: 'uppercase', flexShrink: 0 }}>
+              {t('script.defaultLabel')}
+            </span>
+            <div style={{ flex: 1, height: 1, background: 'rgba(107,114,128,0.3)' }} />
+          </div>
+          <NestedActionList
+            label=""
+            color="#6b7280"
+            actions={switchDefault}
+            onChange={(acts) => onChange({ ...action, switchDefault: acts })}
+            nodeStyle={nodeStyle}
+            library={library}
+            branchId={`branch:${nodeId}:default`}
+            currentEntryId={currentEntryId}
+          />
+        </div>
+
+        {/* END SWITCH divider */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          padding: '4px 0 0 0',
+        }}>
+          <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.6, textTransform: 'uppercase', flexShrink: 0 }}>
+            {t('script.endSwitch')}
+          </span>
+          <div style={{ flex: 1, height: 1, background: `${color}22` }} />
+        </div>
+      </div>
+    )
+  }
+
+  // If-Else mode (original)
   return (
     <div>
       {/* THEN divider — external structural marker */}
@@ -795,18 +1496,154 @@ function ConditionBranchesExternal({ action, onChange, nodeStyle, library, nodeI
   )
 }
 
+// ── NestedSwitchBranches — case/default branches for switch mode inside nested cards ──
+
+function NestedSwitchBranches({ action, onChange, color, nodeStyle, library, currentEntryId, depth, nestedPath }: {
+  action: IfElseAction
+  onChange: (a: ActionConfig) => void
+  color: string
+  nodeStyle: NodeStyle
+  library: ShortcutEntry[]
+  currentEntryId?: string
+  depth: number
+  nestedPath?: string
+}): JSX.Element {
+  const t = useT()
+  const switchCases: SwitchCase[] = action.switchCases ?? [{ value: '', actions: [] }]
+  const switchDefault: ActionConfig[] = action.switchDefault ?? []
+
+  const updateCase = (idx: number, updated: SwitchCase) => {
+    onChange({ ...action, switchCases: switchCases.map((c, i) => i === idx ? updated : c) })
+  }
+
+  return (
+    <>
+      {/* Case branches — divider labels only */}
+      {switchCases.map((sc, idx) => (
+        <div key={idx}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 2px 0' }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.9, textTransform: 'uppercase', flexShrink: 0 }}>
+              {t('script.caseLabel')} {sc.value ? `"${sc.value}"` : `#${idx + 1}`}
+            </span>
+            <div style={{ flex: 1, height: 1, background: `${color}44` }} />
+          </div>
+          <NestedActionListSimple
+            color={color}
+            actions={sc.actions}
+            onChange={(acts) => updateCase(idx, { ...sc, actions: acts })}
+            nodeStyle={nodeStyle}
+            library={library}
+            currentEntryId={currentEntryId}
+            depth={depth + 1}
+            branchId={nestedPath ? `${nestedPath}:case-${idx}` : `branch:nested-${depth}:case-${idx}`}
+          />
+        </div>
+      ))}
+
+      {/* DEFAULT branch — always present */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 2px 0' }}>
+          <span style={{ fontSize: 9, fontWeight: 700, color: '#6b7280', letterSpacing: '0.08em', opacity: 0.9, textTransform: 'uppercase', flexShrink: 0 }}>
+            {t('script.defaultLabel')}
+          </span>
+          <div style={{ flex: 1, height: 1, background: 'rgba(107,114,128,0.3)' }} />
+        </div>
+        <NestedActionListSimple
+          color="#6b7280"
+          actions={switchDefault}
+          onChange={(acts) => onChange({ ...action, switchDefault: acts })}
+          nodeStyle={nodeStyle}
+          library={library}
+          currentEntryId={currentEntryId}
+          depth={depth + 1}
+          branchId={nestedPath ? `${nestedPath}:default` : `branch:nested-${depth}:default`}
+        />
+      </div>
+
+      {/* END SWITCH */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 0 0' }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.6, textTransform: 'uppercase', flexShrink: 0 }}>
+          {t('script.endSwitch')}
+        </span>
+        <div style={{ flex: 1, height: 1, background: `${color}22` }} />
+      </div>
+    </>
+  )
+}
+
 // ── LoopBranchesExternal — Loop Body/End rendered outside the card ───────────────
 
-function LoopBranchesExternal({ action, onChange, nodeStyle, library, nodeId, currentEntryId }: {
+function LoopBranchesExternal({ action, onChange, nodeStyle, library, nodeId, currentEntryId, availableVars, availableVarInfos }: {
   action: LoopAction
   onChange: (a: ActionConfig) => void
   nodeStyle: NodeStyle
   library: ShortcutEntry[]
   nodeId: string
   currentEntryId?: string
+  availableVars?: string[]
+  availableVarInfos?: VarInfo[]
 }): JSX.Element {
-  const color = nodeStyle['loop']?.color ?? '#06b6d4'
+  const t = useT()
+  const color = nodeStyle['loop']?.color ?? '#2dd4bf'
+  // Build loop iteration variable for inner body nodes
+  const loopMode = action.mode ?? 'repeat'
+  // Detect if the foreach target is a list or dict (needed for display labels)
+  const foreachTargetType = loopMode === 'foreach'
+    ? (availableVarInfos ?? []).find(v => v.name === action.listVar)?.sourceType ?? 'list'
+    : null
+  const loopBodyVars: string[] = [...(availableVars ?? [])]
+  const loopBodyVarInfos: VarInfo[] = [...(availableVarInfos ?? [])]
+  if (loopMode === 'repeat') {
+    loopBodyVars.unshift('__loop_count')
+    loopBodyVarInfos.unshift({ name: '__loop_count', sourceType: 'loop', displayLabel: t('script.loopAssignCount') })
+  } else if (loopMode === 'for') {
+    loopBodyVars.unshift('__loop_i')
+    loopBodyVarInfos.unshift({ name: '__loop_i', sourceType: 'loop', displayLabel: t('script.loopAssignIndex') })
+  } else if (loopMode === 'foreach') {
+    // Always provide both _key and _item for ForEach
+    const itemVar = action.itemVar || '_item'
+    const keyVar = action.keyVar || '_key'
+    loopBodyVars.unshift(itemVar)
+    loopBodyVarInfos.unshift({ name: itemVar, sourceType: 'loop', displayLabel: foreachTargetType === 'dict' ? t('script.loopForeachDictValue') : t('script.loopForeachValue') })
+    loopBodyVars.unshift(keyVar)
+    loopBodyVarInfos.unshift({ name: keyVar, sourceType: 'loop', displayLabel: foreachTargetType === 'dict' ? t('script.loopForeachKey') : t('script.loopForeachIndex') })
+  }
+
+  // Build loop insert context for VariableInput context menus inside the body
+  const loopInsertCtx = useMemo(() => {
+    const options: LoopAssignOption[] = []
+    let directRef = false
+    if (loopMode === 'repeat') {
+      options.push({ label: t('script.loopAssignCount'), varName: 'loop_count', value: '$__loop_count' })
+    } else if (loopMode === 'for') {
+      options.push({ label: t('script.loopAssignIndex'), varName: action.iterVar ?? 'i', value: `$${action.iterVar ?? '__loop_i'}` })
+    } else if (loopMode === 'foreach') {
+      directRef = true
+      const itemVar = action.itemVar || '_item'
+      const keyVar = action.keyVar || '_key'
+      if (foreachTargetType === 'dict') {
+        options.push({ label: t('script.loopForeachKey'), varName: keyVar, value: `$${keyVar}` })
+        options.push({ label: t('script.loopForeachDictValue'), varName: itemVar, value: `$${itemVar}` })
+      } else {
+        options.push({ label: t('script.loopForeachIndex'), varName: keyVar, value: `$${keyVar}` })
+        options.push({ label: t('script.loopForeachValue'), varName: itemVar, value: `$${itemVar}` })
+      }
+    }
+    return {
+      options,
+      directRef,
+      insertSetVar: (name: string, value: string): boolean => {
+        const exists = action.body.some(a => a.type === 'set-var' && (a as SetVarAction).name === name)
+        if (exists) return false
+        const newSetVar: SetVarAction = { type: 'set-var', name, value, scope: 'local' }
+        onChange({ ...action, body: [newSetVar, ...action.body] })
+        return true
+      },
+    }
+  }, [loopMode, action, onChange, t, foreachTargetType])
+
   return (
+    <LoopInsertContext.Provider value={loopInsertCtx}>
     <div>
       {/* DO divider — start of loop body */}
       <div style={{
@@ -827,6 +1664,8 @@ function LoopBranchesExternal({ action, onChange, nodeStyle, library, nodeId, cu
         library={library}
         branchId={`branch:${nodeId}:loop`}
         currentEntryId={currentEntryId}
+        parentVars={loopBodyVars}
+        parentVarInfos={loopBodyVarInfos}
       />
 
       {/* LOOP END divider */}
@@ -840,6 +1679,7 @@ function LoopBranchesExternal({ action, onChange, nodeStyle, library, nodeId, cu
         <div style={{ flex: 1, height: 1, background: `${color}22` }} />
       </div>
     </div>
+    </LoopInsertContext.Provider>
   )
 }
 
@@ -852,7 +1692,7 @@ function SequenceBranchesExternal({ action, onChange, nodeStyle, library, nodeId
   currentEntryId?: string
 }): JSX.Element {
   const t = useT()
-  const color = nodeStyle['sequence']?.color ?? '#f472b6'
+  const color = nodeStyle['sequence']?.color ?? '#2dd4bf'
   return (
     <div>
       {/* PARALLEL divider */}
@@ -890,21 +1730,101 @@ function SequenceBranchesExternal({ action, onChange, nodeStyle, library, nodeId
   )
 }
 
+// ── RunShortcutInline — sub-component for run-shortcut with gallery picker ────
+
+function RunShortcutInline({ action, onChange, library, groups, resourceIcons, currentEntryId, inp }: {
+  action: RunShortcutAction
+  onChange: (a: ActionConfig) => void
+  library: ShortcutEntry[]
+  groups: ShortcutGroup[]
+  resourceIcons: ResourceIconEntry[]
+  currentEntryId?: string
+  inp: React.CSSProperties
+}): JSX.Element {
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerPos, setPickerPos] = useState({ top: 0, left: 0 })
+
+  const available = currentEntryId ? library.filter((e) => e.id !== currentEntryId) : library
+  const selectedEntry = available.find((e) => e.id === action.shortcutId)
+
+  const handleOpenPicker = useCallback(() => {
+    if (!btnRef.current) return
+    const rect = btnRef.current.getBoundingClientRect()
+    setPickerPos({ top: rect.bottom + 2, left: rect.left })
+    setPickerOpen(true)
+  }, [])
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+        <button
+          ref={btnRef}
+          onClick={handleOpenPicker}
+          data-no-dnd="true"
+          style={{
+            ...inp,
+            minWidth: 60,
+            cursor: 'pointer',
+            textAlign: 'left',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            overflow: 'hidden',
+            minHeight: 26,
+            background: 'var(--c-accent-bg)', border: '1px solid var(--c-accent-border)',
+          }}
+        >
+          {selectedEntry ? (
+            <>
+              <span style={{ flexShrink: 0, color: selectedEntry.bgColor ?? '#22d3ee' }}>
+                {resolveEntryIcon(selectedEntry, resourceIcons, 13)}
+              </span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {selectedEntry.name}
+              </span>
+            </>
+          ) : (
+            <span>{'\u00A0'}</span>
+          )}
+        </button>
+      </div>
+
+      {/* Gallery picker menu */}
+      {pickerOpen && (
+        <ShortcutPickerMenu
+          library={available}
+          groups={groups}
+          resourceIcons={resourceIcons}
+          selectedId={action.shortcutId}
+          onSelect={(id) => onChange({ ...action, shortcutId: id })}
+          onClose={() => setPickerOpen(false)}
+          pos={pickerPos}
+        />
+      )}
+    </div>
+  )
+}
+
 // ── InlineNodeFields — unified right-side input for every node type ─────────────
 
-function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId, availableVars }: {
+function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, groups, resourceIcons, currentEntryId, availableVars, availableVarInfos, nodeIndex }: {
   action: ActionConfig
   onChange: (a: ActionConfig) => void
   nodeStyle: NodeStyle
   library: ShortcutEntry[]
+  groups?: ShortcutGroup[]
+  resourceIcons?: ResourceIconEntry[]
   currentEntryId?: string
   availableVars?: string[]
-}): JSX.Element {
+  availableVarInfos?: VarInfo[]
+  nodeIndex?: number
+}): JSX.Element | null {
   const t = useT()
   const SYSTEM_LABELS = getSystemLabels(t)
 
   const inp: React.CSSProperties = {
-    background: 'var(--c-input-bg)',
+    background: 'var(--c-surface)',
     border: '1px solid var(--c-border)',
     borderRadius: 6,
     color: 'var(--c-text)',
@@ -913,33 +1833,46 @@ function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId
     fontFamily: 'inherit',
     outline: 'none',
     boxSizing: 'border-box',
+    textAlign: 'right',
+  }
+
+  /** Accent-styled input field (always blue border + light blue bg) */
+  const inpField: React.CSSProperties = {
+    ...inp,
+    background: 'var(--c-accent-bg)',
+    border: '1px solid var(--c-accent-border)',
+    color: 'var(--c-accent)',
   }
 
   if (action.type === 'launch') {
     return (
-      <button
-        onClick={async () => {
-          const path = await window.shortcutsAPI.pickExe()
-          if (path) onChange({ type: 'launch', target: path })
-        }}
-        title={action.target || t('modal.appPath')}
-        style={{
-          ...inp, cursor: 'pointer', textAlign: 'left', display: 'block',
-          color: action.target ? 'var(--c-text)' : 'var(--c-text-dim)',
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          minWidth: 120, maxWidth: 260,
-        }}
-      >
-        {action.target ? compressPath(action.target) : t('modal.appPath')}
-      </button>
+      <VariableInput
+        value={action.target}
+        onChange={(v) => onChange({ type: 'launch', target: v })}
+        availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+        extraMenuItems={[{
+          id: 'browse-file',
+          label: t('script.browseFile'),
+          icon: 'folder',
+          color: '#60a5fa',
+          onSelect: async () => {
+            const path = await window.shortcutsAPI.pickExe()
+            if (path) onChange({ type: 'launch', target: path })
+          },
+        }]}
+        style={{ ...inpField, minWidth: 60 }}
+      />
     )
   }
 
-  if (action.type === 'shortcut') {
+  if (action.type === 'keyboard') {
     return (
-      <div style={{ minWidth: 140, maxWidth: 220 }}>
-        <ShortcutRecorder value={action.keys} onChange={(keys) => onChange({ type: 'shortcut', keys })} />
-      </div>
+      <ShortcutVariableInput
+        value={action.keys}
+        onChange={(keys) => onChange({ type: 'keyboard', keys })}
+        availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+        style={{ ...inpField, minWidth: 60 }}
+      />
     )
   }
 
@@ -948,24 +1881,85 @@ function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId
       <VariableInput
         value={action.command}
         onChange={(v) => onChange({ type: 'shell', command: v })}
-        availableVars={availableVars ?? []}
-        placeholder={t('modal.shellCmd')}
-        style={{ ...inp, minWidth: 120, flex: 1 }}
+        availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+        style={{ ...inpField, minWidth: 120, flex: 1 }}
       />
     )
   }
 
   if (action.type === 'system') {
     return (
-      <select
+      <CustomSelect
         value={action.action}
-        onChange={(e) => onChange({ type: 'system', action: e.target.value as SystemActionId })}
+        onChange={(v) => onChange({ type: 'system', action: v as SystemActionId })}
+        options={SYSTEM_ACTIONS.map((a) => ({ value: a, label: SYSTEM_LABELS[a] }))}
         style={{ ...inp, minWidth: 120 }}
-      >
-        {SYSTEM_ACTIONS.map((a) => (
-          <option key={a} value={a}>{SYSTEM_LABELS[a]}</option>
-        ))}
-      </select>
+      />
+    )
+  }
+
+  if (action.type === 'link') {
+    return (
+      <VariableInput
+        value={action.url}
+        onChange={(v) => onChange({ type: 'link', url: v })}
+        availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+        style={{ ...inpField, minWidth: 120, flex: 1 }}
+        placeholder="https://..."
+      />
+    )
+  }
+
+  if (action.type === 'mouse-move') {
+    const a = action as import('@shared/config.types').MouseMoveAction
+    return (
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+        <CustomSelect
+          value={a.mode ?? 'set'}
+          onChange={(v) => onChange({ ...a, mode: v as import('@shared/config.types').MouseMoveMode })}
+          options={[
+            { value: 'set', label: t('mouse.modeSet') },
+            { value: 'offset', label: t('mouse.modeOffset') },
+          ]}
+          style={{ ...inp, minWidth: 80 }}
+        />
+        <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>{t('mouse.x')}</span>
+        <VariableInput
+          value={a.x}
+          onChange={(v) => onChange({ ...a, x: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          style={{ ...inpField, width: 60, minWidth: 50 }}
+          placeholder="0"
+        />
+        <span style={{ fontSize: 11, color: 'var(--c-text-dim)' }}>{t('mouse.y')}</span>
+        <VariableInput
+          value={a.y}
+          onChange={(v) => onChange({ ...a, y: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          style={{ ...inpField, width: 60, minWidth: 50 }}
+          placeholder="0"
+        />
+      </div>
+    )
+  }
+
+  if (action.type === 'mouse-click') {
+    const a = action as import('@shared/config.types').MouseClickAction
+    return (
+      <CustomSelect
+        value={a.button ?? 'left'}
+        onChange={(v) => onChange({ ...a, button: v as import('@shared/config.types').MouseButton })}
+        options={[
+          { value: 'left', label: t('mouse.left') },
+          { value: 'right', label: t('mouse.right') },
+          { value: 'middle', label: t('mouse.middle') },
+          { value: 'side1', label: t('mouse.side1') },
+          { value: 'side2', label: t('mouse.side2') },
+          { value: 'wheel-up', label: t('mouse.wheelUp') },
+          { value: 'wheel-down', label: t('mouse.wheelDown') },
+        ]}
+        style={{ ...inp, minWidth: 120 }}
+      />
     )
   }
 
@@ -976,9 +1970,8 @@ function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId
         <VariableInput
           value={a.name}
           onChange={(v) => onChange({ ...a, name: v })}
-          availableVars={availableVars ?? []}
-          placeholder={t('script.sequenceName')}
-          style={{ ...inp, minWidth: 100, flex: 1 }}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          style={{ ...inpField, minWidth: 100, flex: 1 }}
         />
         <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--c-text-dim)', cursor: 'pointer' }}>
           <input
@@ -997,15 +1990,17 @@ function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId
     const mode: WaitMode = a.mode ?? 'manual'
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-        <select
+        <CustomSelect
           value={mode}
-          onChange={(e) => onChange({ ...a, mode: e.target.value as WaitMode })}
-          style={{ ...inp, width: 90 }}
-        >
-          <option value="manual">{t('script.waitManual')}</option>
-          <option value="variable">{t('script.waitVariable')}</option>
-          <option value="app-exit">{t('script.waitAppExit')}</option>
-        </select>
+          onChange={(v) => onChange({ ...a, mode: v as WaitMode })}
+          options={[
+            { value: 'manual', label: t('script.waitManual') },
+            { value: 'variable', label: t('script.waitVariable') },
+            { value: 'app-exit', label: t('script.waitAppExit') },
+            { value: 'key-input', label: t('script.waitKeyInput') },
+          ]}
+          style={{ ...inp, minWidth: 90 }}
+        />
         {mode === 'manual' && (
           <>
             <input
@@ -1013,7 +2008,7 @@ function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId
               value={a.ms}
               min={0} max={60000}
               onChange={(e) => onChange({ ...a, ms: Math.max(0, Number(e.target.value)) })}
-              style={{ ...inp, width: 80 }}
+              style={{ ...inpField, minWidth: 80 }}
             />
             <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>{t('script.delayMs')}</span>
           </>
@@ -1022,18 +2017,22 @@ function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId
           <VariableInput
             value={a.variable ?? ''}
             onChange={(v) => onChange({ ...a, variable: v })}
-            availableVars={availableVars ?? []}
-            placeholder="$varName"
-            style={{ ...inp, width: 100 }}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            style={{ ...inpField, minWidth: 100 }}
           />
         )}
         {mode === 'app-exit' && (
           <VariableInput
             value={a.launchRef ?? ''}
             onChange={(v) => onChange({ ...a, launchRef: v })}
-            availableVars={availableVars ?? []}
-            placeholder={t('script.waitAppTarget')}
-            style={{ ...inp, width: 140 }}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            style={{ ...inpField, minWidth: 140 }}
+          />
+        )}
+        {mode === 'key-input' && (
+          <ShortcutRecorder
+            value={a.waitKeys ?? ''}
+            onChange={(keys) => onChange({ ...a, waitKeys: keys })}
           />
         )}
       </div>
@@ -1042,75 +2041,164 @@ function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId
 
   if (action.type === 'set-var') {
     const a = action as SetVarAction
-    const dataType: VarDataType = a.dataType ?? 'string'
-    const op: VarOperation      = a.operation ?? 'set'
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-        {/* Data type selector */}
-        <select
-          value={dataType}
-          onChange={(e) => onChange({ ...a, dataType: e.target.value as VarDataType, operation: 'set' as VarOperation })}
-          style={{ ...inp, width: 70 }}
-        >
-          <option value="string">{t('script.varTypeString')}</option>
-          <option value="list">{t('script.varTypeList')}</option>
-          <option value="dict">{t('script.varTypeDict')}</option>
-        </select>
-        {/* Operation selector (non-string types) */}
-        {dataType !== 'string' && (
-          <select
-            value={op}
-            onChange={(e) => onChange({ ...a, operation: e.target.value as VarOperation })}
-            style={{ ...inp, width: 72 }}
-          >
-            <option value="set">{t('script.varOpSet')}</option>
-            <option value="get">{t('script.varOpGet')}</option>
-            <option value="push">{t('script.varOpPush')}</option>
-            <option value="remove">{t('script.varOpRemove')}</option>
-          </select>
-        )}
-        {/* Variable name (target for set/push/remove; source for get) */}
-        <input
+        <VariableInput
           value={a.name}
-          onChange={(e) => onChange({ ...a, name: e.target.value })}
-          placeholder={t('script.varName')}
-          style={{ ...inp, width: 90 }}
+          onChange={(v) => onChange({ ...a, name: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          noReturnValues
+          style={{ ...inpField, minWidth: 60 }}
         />
-        {/* Value field — shown for set/push */}
-        {(dataType === 'string' || op === 'set' || op === 'push') && (
-          <>
-            <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>
-              {op === 'push' ? '←' : '='}
-            </span>
-            <VariableInput
-              value={a.value}
-              onChange={(v) => onChange({ ...a, value: v })}
-              availableVars={availableVars ?? []}
-              placeholder={t('script.varValue')}
-              style={{ ...inp, flex: 1, minWidth: 80 }}
-            />
-          </>
-        )}
-        {/* Key field — for dict push/get/remove or list get/remove */}
-        {dataType !== 'string' && (op === 'push' || op === 'get' || op === 'remove') && (
-          <input
-            value={a.key ?? ''}
-            onChange={(e) => onChange({ ...a, key: e.target.value })}
-            placeholder={t('script.varKey')}
-            style={{ ...inp, width: 72 }}
-          />
-        )}
-        {/* Result variable — for get operation */}
-        {op === 'get' && (
-          <input
-            value={a.resultVar ?? ''}
-            onChange={(e) => onChange({ ...a, resultVar: e.target.value })}
-            placeholder={t('script.varResultVar')}
-            style={{ ...inp, width: 90 }}
-          />
-        )}
+        <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>=</span>
+        <VariableInput
+          value={a.value}
+          onChange={(v) => onChange({ ...a, value: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          style={{ ...inpField, flex: 1, minWidth: 60 }}
+        />
       </div>
     )
+  }
+
+  if (action.type === 'list') {
+    const a = action as ListAction
+    const varMode: VarMode = a.mode ?? 'define'
+    const op: VarOperation = a.operation ?? 'set'
+
+    // Edit mode — operation-based inline layout
+    if (varMode === 'edit') {
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+          <CustomSelect
+            value={varMode}
+            onChange={(v) => onChange({ ...a, mode: v as VarMode })}
+            options={[
+              { value: 'define', label: t('script.varModeDefine') },
+              { value: 'edit', label: t('script.varModeEdit') },
+            ]}
+            style={{ ...inp, minWidth: 62 }}
+          />
+          <CustomSelect
+            value={op}
+            onChange={(v) => onChange({ ...a, operation: v as VarOperation })}
+            options={[
+              { value: 'set', label: t('script.varOpSet') },
+              { value: 'get', label: t('script.varOpGet') },
+              { value: 'push', label: t('script.varOpPush') },
+              { value: 'remove', label: t('script.varOpRemove') },
+            ]}
+            style={{ ...inp, minWidth: 72 }}
+          />
+          <input
+            value={a.name}
+            onChange={(e) => onChange({ ...a, name: e.target.value })}
+            style={{ ...inpField, minWidth: 90 }}
+          />
+          {(op === 'set' || op === 'push') && (
+            <>
+              <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>
+                {op === 'push' ? '←' : '='}
+              </span>
+              <VariableInput
+                value={a.value ?? ''}
+                onChange={(v) => onChange({ ...a, value: v })}
+                availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+                style={{ ...inpField, flex: 1, minWidth: 80 }}
+              />
+            </>
+          )}
+          {(op === 'push' || op === 'get' || op === 'remove') && (
+            <input
+              value={a.key ?? ''}
+              onChange={(e) => onChange({ ...a, key: e.target.value })}
+              style={{ ...inpField, minWidth: 72 }}
+            />
+          )}
+          {op === 'get' && (
+            <input
+              value={a.resultVar ?? ''}
+              onChange={(e) => onChange({ ...a, resultVar: e.target.value })}
+              style={{ ...inpField, minWidth: 90 }}
+            />
+          )}
+        </div>
+      )
+    }
+
+    // Define mode — header-only portion (card body rendered in SortableNode)
+    return null
+  }
+
+  if (action.type === 'dict') {
+    const a = action as DictAction
+    const varMode: VarMode = a.mode ?? 'define'
+    const op: VarOperation = a.operation ?? 'set'
+
+    // Edit mode — operation-based inline layout
+    if (varMode === 'edit') {
+      return (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+          <CustomSelect
+            value={varMode}
+            onChange={(v) => onChange({ ...a, mode: v as VarMode })}
+            options={[
+              { value: 'define', label: t('script.varModeDefine') },
+              { value: 'edit', label: t('script.varModeEdit') },
+            ]}
+            style={{ ...inp, minWidth: 62 }}
+          />
+          <CustomSelect
+            value={op}
+            onChange={(v) => onChange({ ...a, operation: v as VarOperation })}
+            options={[
+              { value: 'set', label: t('script.varOpSet') },
+              { value: 'get', label: t('script.varOpGet') },
+              { value: 'remove', label: t('script.varOpRemove') },
+            ]}
+            style={{ ...inp, minWidth: 72 }}
+          />
+          <input
+            value={a.name}
+            onChange={(e) => onChange({ ...a, name: e.target.value })}
+            style={{ ...inpField, minWidth: 90 }}
+          />
+          {op === 'set' && (
+            <>
+              <input
+                value={a.key ?? ''}
+                onChange={(e) => onChange({ ...a, key: e.target.value })}
+                style={{ ...inpField, minWidth: 72 }}
+              />
+              <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>=</span>
+              <VariableInput
+                value={a.value ?? ''}
+                onChange={(v) => onChange({ ...a, value: v })}
+                availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+                style={{ ...inpField, flex: 1, minWidth: 80 }}
+              />
+            </>
+          )}
+          {(op === 'get' || op === 'remove') && (
+            <input
+              value={a.key ?? ''}
+              onChange={(e) => onChange({ ...a, key: e.target.value })}
+              style={{ ...inpField, minWidth: 72 }}
+            />
+          )}
+          {op === 'get' && (
+            <input
+              value={a.resultVar ?? ''}
+              onChange={(e) => onChange({ ...a, resultVar: e.target.value })}
+              style={{ ...inpField, minWidth: 90 }}
+            />
+          )}
+        </div>
+      )
+    }
+
+    // Define mode — header-only portion (card body rendered in SortableNode)
+    return null
   }
 
   if (action.type === 'toast') {
@@ -1119,95 +2207,28 @@ function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId
       <VariableInput
         value={a.message}
         onChange={(v) => onChange({ ...a, message: v })}
-        availableVars={availableVars ?? []}
-        placeholder={t('script.message')}
-        style={{ ...inp, minWidth: 120, flex: 1 }}
+        availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+        style={{ ...inpField, minWidth: 120, flex: 1 }}
       />
     )
   }
 
   if (action.type === 'run-shortcut') {
-    const a = action as RunShortcutAction
-    const available = currentEntryId ? library.filter((e) => e.id !== currentEntryId) : library
-    const inputs = a.inputs ?? {}
-    const inputEntries = Object.entries(inputs)
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-          <select
-            value={a.shortcutId}
-            onChange={(e) => onChange({ ...a, shortcutId: e.target.value })}
-            style={{ ...inp, minWidth: 140, flex: 1 }}
-          >
-            <option value="">{available.length === 0 ? t('script.noShortcuts') : t('script.selectShortcut')}</option>
-            {available.map((entry) => (
-              <option key={entry.id} value={entry.id}>{entry.name}</option>
-            ))}
-          </select>
-          <input
-            value={a.outputVar ?? ''}
-            onChange={(e) => onChange({ ...a, outputVar: e.target.value || undefined })}
-            placeholder={t('script.outputVar')}
-            style={{ ...inp, width: 90 }}
-          />
-        </div>
-        {/* Input parameter mappings */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: 4 }}>
-          {inputEntries.map(([param, expr], idx) => (
-            <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <input
-                value={param}
-                onChange={(e) => {
-                  const newInputs = { ...inputs }
-                  const val = newInputs[param]
-                  delete newInputs[param]
-                  if (e.target.value) newInputs[e.target.value] = val
-                  onChange({ ...a, inputs: Object.keys(newInputs).length > 0 ? newInputs : undefined })
-                }}
-                placeholder={t('script.inputParam')}
-                style={{ ...inp, width: 80 }}
-              />
-              <span style={{ fontSize: 10, color: 'var(--c-text-dim)' }}>=</span>
-              <input
-                value={expr}
-                onChange={(e) => {
-                  const newInputs = { ...inputs, [param]: e.target.value }
-                  onChange({ ...a, inputs: newInputs })
-                }}
-                placeholder={t('script.inputValue')}
-                style={{ ...inp, width: 90, flex: 1 }}
-              />
-              <button
-                onClick={() => {
-                  const newInputs = { ...inputs }
-                  delete newInputs[param]
-                  onChange({ ...a, inputs: Object.keys(newInputs).length > 0 ? newInputs : undefined })
-                }}
-                style={{ background: 'none', border: 'none', color: 'var(--c-text-dim)', cursor: 'pointer', padding: '0 2px', fontSize: 12 }}
-                title="Remove"
-              >&times;</button>
-            </div>
-          ))}
-          <button
-            onClick={() => {
-              const newInputs = { ...inputs, '': '' }
-              onChange({ ...a, inputs: newInputs })
-            }}
-            style={{
-              background: 'none', border: '1px dashed var(--c-border)', borderRadius: 4,
-              color: 'var(--c-text-dim)', cursor: 'pointer', padding: '2px 8px', fontSize: 10,
-              alignSelf: 'flex-start',
-            }}
-          >
-            {t('script.addInput')}
-          </button>
-        </div>
-      </div>
+      <RunShortcutInline
+        action={action as RunShortcutAction}
+        onChange={onChange}
+        library={library}
+        groups={groups ?? []}
+        resourceIcons={resourceIcons ?? []}
+        currentEntryId={currentEntryId}
+        inp={inp}
+      />
     )
   }
 
   if (action.type === 'if-else') {
-    return <ConditionInlineFields action={action as IfElseAction} onChange={onChange} availableVars={availableVars} />
+    return <ConditionInlineFields action={action as IfElseAction} onChange={onChange} availableVars={availableVars} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} />
   }
 
   if (action.type === 'loop') {
@@ -1215,69 +2236,64 @@ function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId
     const mode: LoopMode = a.mode ?? 'repeat'
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
-        <select
+        <CustomSelect
           value={mode}
-          onChange={(e) => onChange({ ...a, mode: e.target.value as LoopMode })}
+          onChange={(v) => onChange({ ...a, mode: v as LoopMode })}
+          options={[
+            { value: 'repeat', label: t('script.loopModeRepeat') },
+            { value: 'for', label: t('script.loopModeFor') },
+            { value: 'foreach', label: t('script.loopModeForeach') },
+          ]}
           style={{ ...inp, width: 80 }}
-        >
-          <option value="repeat">{t('script.loopModeRepeat')}</option>
-          <option value="for">{t('script.loopModeFor')}</option>
-          <option value="foreach">{t('script.loopModeForeach')}</option>
-        </select>
+        />
         {mode === 'repeat' && (
-          <>
-            <input
-              type="number" value={a.count} min={1} max={1000}
-              onChange={(e) => onChange({ ...a, count: Math.max(1, Math.min(1000, Number(e.target.value))) })}
-              style={{ ...inp, width: 60 }}
-            />
-            <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>{t('script.repeatTimes')}</span>
-          </>
+          <VariableInput
+            value={String(a.count ?? '')}
+            onChange={(v) => { const n = parseInt(v, 10); onChange({ ...a, count: !isNaN(n) && !/^\$|^@/.test(v) ? Math.max(1, Math.min(1000, n)) : v }) }}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            style={{ ...inpField, minWidth: 40 }}
+          />
         )}
         {mode === 'for' && (
           <>
-            <input
-              value={a.iterVar ?? 'i'}
-              onChange={(e) => onChange({ ...a, iterVar: e.target.value })}
-              placeholder={t('script.loopIterVar')}
-              style={{ ...inp, width: 52 }}
-            />
-            <input
-              type="number" value={a.start ?? 0}
-              onChange={(e) => onChange({ ...a, start: Number(e.target.value) })}
-              style={{ ...inp, width: 52 }}
+            <VariableInput
+              value={String(a.start ?? '')}
+              onChange={(v) => { const n = parseInt(v, 10); onChange({ ...a, start: !isNaN(n) && !/^\$|^@/.test(v) ? n : v }) }}
+              availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+              style={{ ...inpField, minWidth: 40 }}
             />
             <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>{t('script.loopTo')}</span>
-            <input
-              type="number" value={a.end ?? 10}
-              onChange={(e) => onChange({ ...a, end: Number(e.target.value) })}
-              style={{ ...inp, width: 52 }}
+            <VariableInput
+              value={String(a.end ?? '')}
+              onChange={(v) => { const n = parseInt(v, 10); onChange({ ...a, end: !isNaN(n) && !/^\$|^@/.test(v) ? n : v }) }}
+              availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+              style={{ ...inpField, minWidth: 40 }}
             />
             <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>{t('script.loopStep')}</span>
-            <input
-              type="number" value={a.step ?? 1}
-              onChange={(e) => onChange({ ...a, step: Number(e.target.value) })}
-              style={{ ...inp, width: 46 }}
+            <VariableInput
+              value={String(a.step ?? '')}
+              onChange={(v) => { const n = parseInt(v, 10); onChange({ ...a, step: !isNaN(n) && !/^\$|^@/.test(v) ? n : v }) }}
+              availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+              style={{ ...inpField, minWidth: 40 }}
             />
           </>
         )}
-        {mode === 'foreach' && (
-          <>
-            <input
-              value={a.itemVar ?? 'item'}
-              onChange={(e) => onChange({ ...a, itemVar: e.target.value })}
-              placeholder={t('script.loopItemVar')}
-              style={{ ...inp, width: 64 }}
+        {mode === 'foreach' && (() => {
+          // Filter to only show List and Dict variables
+          const foreachVarInfos = (availableVarInfos ?? []).filter(v => v.sourceType === 'list' || v.sourceType === 'dict')
+          const foreachVars = foreachVarInfos.map(v => v.name)
+          return (
+            <VariableInput
+              value={a.listVar ? `$${a.listVar}` : ''}
+              onChange={(v) => {
+                const varName = v.startsWith('$') ? v.slice(1) : v
+                onChange({ ...a, listVar: varName, itemVar: '_item', keyVar: '_key' })
+              }}
+              availableVars={foreachVars} availableVarInfos={foreachVarInfos} nodeIndex={nodeIndex}
+              style={{ ...inpField, minWidth: 60 }}
             />
-            <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>in</span>
-            <input
-              value={a.listVar ?? ''}
-              onChange={(e) => onChange({ ...a, listVar: e.target.value })}
-              placeholder={t('script.loopListVar')}
-              style={{ ...inp, width: 80 }}
-            />
-          </>
-        )}
+          )
+        })()}
       </div>
     )
   }
@@ -1293,8 +2309,7 @@ function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId
         <input
           value={a.returnVar ?? ''}
           onChange={(e) => onChange({ ...a, returnVar: e.target.value || undefined })}
-          placeholder={t('script.stopReturnVar')}
-          style={{ ...inp, width: 90 }}
+          style={{ ...inpField, minWidth: 90 }}
         />
         {a.returnVar && (
           <>
@@ -1302,8 +2317,7 @@ function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId
             <input
               value={a.returnValue ?? ''}
               onChange={(e) => onChange({ ...a, returnValue: e.target.value })}
-              placeholder={t('script.stopReturnValue')}
-              style={{ ...inp, width: 100 }}
+              style={{ ...inpField, minWidth: 100 }}
             />
           </>
         )}
@@ -1315,47 +2329,37 @@ function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId
     const a = action as CalculateAction
     const isSqrt = a.operation === 'sqrt'
     const CALC_OPS: { value: CalcOperation; label: string }[] = [
-      { value: 'add',      label: t('script.calcOpAdd') },
-      { value: 'sub',      label: t('script.calcOpSub') },
-      { value: 'mul',      label: t('script.calcOpMul') },
-      { value: 'div',      label: t('script.calcOpDiv') },
-      { value: 'mod',      label: t('script.calcOpMod') },
-      { value: 'floordiv', label: t('script.calcOpFloorDiv') },
-      { value: 'pow',      label: t('script.calcOpPow') },
-      { value: 'sqrt',     label: t('script.calcOpSqrt') },
+      { value: 'add',      label: '+' },
+      { value: 'sub',      label: '−' },
+      { value: 'mul',      label: '×' },
+      { value: 'div',      label: '÷' },
+      { value: 'mod',      label: '%' },
+      { value: 'floordiv', label: '//' },
+      { value: 'pow',      label: '^' },
+      { value: 'sqrt',     label: '√' },
     ]
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
         <VariableInput
           value={a.operandA}
           onChange={(v) => onChange({ ...a, operandA: v })}
-          availableVars={availableVars ?? []}
-          placeholder="$a"
-          style={{ ...inp, width: 60 }}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          style={{ ...inpField, minWidth: 60 }}
         />
-        <select
+        <CustomSelect
           value={a.operation}
-          onChange={(e) => onChange({ ...a, operation: e.target.value as CalcOperation })}
-          style={{ ...inp, minWidth: 112 }}
-        >
-          {CALC_OPS.map((op) => <option key={op.value} value={op.value}>{op.label}</option>)}
-        </select>
+          onChange={(v) => onChange({ ...a, operation: v as CalcOperation })}
+          options={CALC_OPS.map((op) => ({ value: op.value, label: op.label }))}
+          style={{ ...inp, minWidth: 52 }}
+        />
         {!isSqrt && (
           <VariableInput
             value={a.operandB ?? ''}
             onChange={(v) => onChange({ ...a, operandB: v })}
-            availableVars={availableVars ?? []}
-            placeholder="$b"
-            style={{ ...inp, width: 60 }}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            style={{ ...inpField, minWidth: 60 }}
           />
         )}
-        <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>{t('script.calcResult')}</span>
-        <input
-          value={a.resultVar}
-          onChange={(e) => onChange({ ...a, resultVar: e.target.value })}
-          placeholder="result"
-          style={{ ...inp, width: 72 }}
-        />
       </div>
     )
   }
@@ -1366,8 +2370,7 @@ function InlineNodeFields({ action, onChange, nodeStyle, library, currentEntryId
       <input
         value={a.text}
         onChange={(e) => onChange({ ...a, text: e.target.value })}
-        placeholder={t('script.commentPlaceholder')}
-        style={{ ...inp, flex: 1, minWidth: 140, fontStyle: 'italic' }}
+        style={{ ...inpField, flex: 1, minWidth: 140, fontStyle: 'italic' }}
       />
     )
   }
@@ -1385,7 +2388,9 @@ function NestedNodeCard({
   onDelete,
   currentEntryId,
   depth = 0,
+  nestedPath,
   availableVars,
+  availableVarInfos,
 }: {
   action: ActionConfig
   nodeStyle: NodeStyle
@@ -1394,7 +2399,9 @@ function NestedNodeCard({
   onChange: (a: ActionConfig) => void
   onDelete: () => void
   depth?: number
+  nestedPath?: string
   availableVars?: string[]
+  availableVarInfos?: VarInfo[]
 }): JSX.Element {
   const t = useT()
   const cfg = nodeStyle[action.type] ?? nodeStyle.shell
@@ -1424,7 +2431,7 @@ function NestedNodeCard({
   const iconLabel = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, userSelect: 'none' }}>
       <span style={{ color: nodeColor }}>{renderNodeIcon(nodeIcon, 14)}</span>
-      <span style={{ fontSize: 11, fontWeight: 700, color: nodeColor, whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: 11, color: nodeColor, whiteSpace: 'nowrap' }}>
         {cfg.label}
       </span>
     </div>
@@ -1437,7 +2444,7 @@ function NestedNodeCard({
     return (
       <div>
         <div style={{
-          borderRadius: 8, background: 'var(--c-elevated)',
+          borderRadius: 8, background: 'var(--c-node-bg)',
           border: '1px solid var(--c-border)', borderLeft: `3px solid ${color}`,
           padding: '8px 12px',
         }}>
@@ -1445,52 +2452,60 @@ function NestedNodeCard({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {iconLabel}
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }} onPointerDown={(e) => e.stopPropagation()}>
-              <ConditionMatchSelect action={a} onChange={onChange} />
+              <ConditionModeSelect action={a} onChange={onChange} />
             </div>
             {deleteBtn}
           </div>
           <div style={{ height: 1, background: `${color}33`, margin: '7px 0' }} />
           <div onPointerDown={(e) => e.stopPropagation()}>
-            <ConditionCriteriaSection action={a} onChange={onChange} />
+            <ConditionCriteriaSection action={a} onChange={onChange} availableVars={availableVars} availableVarInfos={availableVarInfos} />
           </div>
         </div>
-        {/* Recursive then/else branches — stop propagation to prevent parent drag */}
+        {/* Recursive branches — stop propagation to prevent parent drag */}
         <div style={{ paddingLeft: 6 }} onPointerDown={(e) => e.stopPropagation()}>
-          {/* THEN */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 2px 0' }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.9, textTransform: 'uppercase', flexShrink: 0 }}>{t('script.thenLabel')}</span>
-            <div style={{ flex: 1, height: 1, background: `${color}44` }} />
-          </div>
-          <NestedActionListSimple
-            color={color}
-            actions={a.thenActions}
-            onChange={(acts) => onChange({ ...a, thenActions: acts })}
-            nodeStyle={nodeStyle}
-            library={library}
-            currentEntryId={currentEntryId}
-            depth={depth + 1}
-            branchId={`branch:nested-${depth}:then`}
-          />
-          {/* ELSE */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 2px 0' }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color: '#6b7280', letterSpacing: '0.08em', opacity: 0.9, textTransform: 'uppercase', flexShrink: 0 }}>{t('script.elseLabel')}</span>
-            <div style={{ flex: 1, height: 1, background: 'rgba(107,114,128,0.3)' }} />
-          </div>
-          <NestedActionListSimple
-            color="#6b7280"
-            actions={a.elseActions}
-            onChange={(acts) => onChange({ ...a, elseActions: acts })}
-            nodeStyle={nodeStyle}
-            library={library}
-            currentEntryId={currentEntryId}
-            depth={depth + 1}
-            branchId={`branch:nested-${depth}:else`}
-          />
-          {/* END IF */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 0 0' }}>
-            <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.6, textTransform: 'uppercase', flexShrink: 0 }}>END IF</span>
-            <div style={{ flex: 1, height: 1, background: `${color}22` }} />
-          </div>
+          {(a.conditionMode ?? 'if-else') === 'switch' ? (
+            /* Switch mode branches */
+            <NestedSwitchBranches action={a} onChange={onChange} color={color} nodeStyle={nodeStyle} library={library} currentEntryId={currentEntryId} depth={depth} nestedPath={nestedPath} />
+          ) : (
+            /* If-Else mode branches */
+            <>
+              {/* THEN */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 2px 0' }}>
+                <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.9, textTransform: 'uppercase', flexShrink: 0 }}>{t('script.thenLabel')}</span>
+                <div style={{ flex: 1, height: 1, background: `${color}44` }} />
+              </div>
+              <NestedActionListSimple
+                color={color}
+                actions={a.thenActions}
+                onChange={(acts) => onChange({ ...a, thenActions: acts })}
+                nodeStyle={nodeStyle}
+                library={library}
+                currentEntryId={currentEntryId}
+                depth={depth + 1}
+                branchId={nestedPath ? `${nestedPath}:then` : `branch:nested-${depth}:then`}
+              />
+              {/* ELSE */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 2px 0' }}>
+                <span style={{ fontSize: 9, fontWeight: 700, color: '#6b7280', letterSpacing: '0.08em', opacity: 0.9, textTransform: 'uppercase', flexShrink: 0 }}>{t('script.elseLabel')}</span>
+                <div style={{ flex: 1, height: 1, background: 'rgba(107,114,128,0.3)' }} />
+              </div>
+              <NestedActionListSimple
+                color="#6b7280"
+                actions={a.elseActions}
+                onChange={(acts) => onChange({ ...a, elseActions: acts })}
+                nodeStyle={nodeStyle}
+                library={library}
+                currentEntryId={currentEntryId}
+                depth={depth + 1}
+                branchId={nestedPath ? `${nestedPath}:else` : `branch:nested-${depth}:else`}
+              />
+              {/* END IF */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 0 0' }}>
+                <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.6, textTransform: 'uppercase', flexShrink: 0 }}>END IF</span>
+                <div style={{ flex: 1, height: 1, background: `${color}22` }} />
+              </div>
+            </>
+          )}
         </div>
       </div>
     )
@@ -1499,18 +2514,72 @@ function NestedNodeCard({
   // ── Nested loop: card header + recursive body branch ──
   if (action.type === 'loop') {
     const a = action as LoopAction
+    const loopMode = a.mode ?? 'repeat'
     const color = cfg.color
+    // Detect if the foreach target is a list or dict (needed for display labels)
+    const nestedForeachTargetType = loopMode === 'foreach'
+      ? (availableVarInfos ?? []).find(v => v.name === a.listVar)?.sourceType ?? 'list'
+      : null
+    // Build loop iteration variable for inner body nodes
+    const loopBodyVars: string[] = [...(availableVars ?? [])]
+    const loopBodyVarInfos: VarInfo[] = [...(availableVarInfos ?? [])]
+    if (loopMode === 'repeat') {
+      loopBodyVars.unshift('__loop_count')
+      loopBodyVarInfos.unshift({ name: '__loop_count', sourceType: 'loop', displayLabel: t('script.loopAssignCount') })
+    } else if (loopMode === 'for') {
+      loopBodyVars.unshift('__loop_i')
+      loopBodyVarInfos.unshift({ name: '__loop_i', sourceType: 'loop', displayLabel: t('script.loopAssignIndex') })
+    } else if (loopMode === 'foreach') {
+      const itemVar = a.itemVar || '_item'
+      const keyVar = a.keyVar || '_key'
+      loopBodyVars.unshift(itemVar)
+      loopBodyVarInfos.unshift({ name: itemVar, sourceType: 'loop', displayLabel: nestedForeachTargetType === 'dict' ? t('script.loopForeachDictValue') : t('script.loopForeachValue') })
+      loopBodyVars.unshift(keyVar)
+      loopBodyVarInfos.unshift({ name: keyVar, sourceType: 'loop', displayLabel: nestedForeachTargetType === 'dict' ? t('script.loopForeachKey') : t('script.loopForeachIndex') })
+    }
+
+    // Build loop insert context for nested VariableInputs
+    const nestedLoopOptions: LoopAssignOption[] = []
+    let nestedDirectRef = false
+    if (loopMode === 'repeat') {
+      nestedLoopOptions.push({ label: t('script.loopAssignCount'), varName: 'loop_count', value: '$__loop_count' })
+    } else if (loopMode === 'for') {
+      nestedLoopOptions.push({ label: t('script.loopAssignIndex'), varName: a.iterVar ?? 'i', value: `$${a.iterVar ?? '__loop_i'}` })
+    } else if (loopMode === 'foreach') {
+      nestedDirectRef = true
+      const itemVar = a.itemVar || '_item'
+      const keyVar = a.keyVar || '_key'
+      if (nestedForeachTargetType === 'dict') {
+        nestedLoopOptions.push({ label: t('script.loopForeachKey'), varName: keyVar, value: `$${keyVar}` })
+        nestedLoopOptions.push({ label: t('script.loopForeachDictValue'), varName: itemVar, value: `$${itemVar}` })
+      } else {
+        nestedLoopOptions.push({ label: t('script.loopForeachIndex'), varName: keyVar, value: `$${keyVar}` })
+        nestedLoopOptions.push({ label: t('script.loopForeachValue'), varName: itemVar, value: `$${itemVar}` })
+      }
+    }
+    const nestedLoopInsert = {
+      options: nestedLoopOptions,
+      directRef: nestedDirectRef,
+      insertSetVar: (name: string, value: string): boolean => {
+        const exists = a.body.some(b => b.type === 'set-var' && (b as SetVarAction).name === name)
+        if (exists) return false
+        onChange({ ...a, body: [{ type: 'set-var', name, value, scope: 'local' } as SetVarAction, ...a.body] })
+        return true
+      },
+    }
+
     return (
+      <LoopInsertContext.Provider value={nestedLoopInsert}>
       <div>
         <div style={{
-          borderRadius: 8, background: 'var(--c-elevated)',
+          borderRadius: 8, background: 'var(--c-node-bg)',
           border: '1px solid var(--c-border)', borderLeft: `3px solid ${color}`,
           padding: '8px 12px',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {iconLabel}
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexWrap: 'wrap' }} onPointerDown={(e) => e.stopPropagation()}>
-              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} currentEntryId={currentEntryId} availableVars={availableVars} />
+              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} currentEntryId={currentEntryId} availableVars={availableVars} availableVarInfos={availableVarInfos} />
             </div>
             {deleteBtn}
           </div>
@@ -1529,7 +2598,9 @@ function NestedNodeCard({
             library={library}
             currentEntryId={currentEntryId}
             depth={depth + 1}
-            branchId={`branch:nested-${depth}:loop`}
+            branchId={nestedPath ? `${nestedPath}:loop` : `branch:nested-${depth}:loop`}
+            parentVars={loopBodyVars}
+            parentVarInfos={loopBodyVarInfos}
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 0 0' }}>
             <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.6, textTransform: 'uppercase', flexShrink: 0 }}>LOOP END</span>
@@ -1537,6 +2608,7 @@ function NestedNodeCard({
           </div>
         </div>
       </div>
+      </LoopInsertContext.Provider>
     )
   }
 
@@ -1547,14 +2619,14 @@ function NestedNodeCard({
     return (
       <div>
         <div style={{
-          borderRadius: 8, background: 'var(--c-elevated)',
+          borderRadius: 8, background: 'var(--c-node-bg)',
           border: '1px solid var(--c-border)', borderLeft: `3px solid ${color}`,
           padding: '8px 12px',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {iconLabel}
             <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexWrap: 'wrap' }} onPointerDown={(e) => e.stopPropagation()}>
-              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} currentEntryId={currentEntryId} availableVars={availableVars} />
+              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} currentEntryId={currentEntryId} availableVars={availableVars} availableVarInfos={availableVarInfos} />
             </div>
             {deleteBtn}
           </div>
@@ -1573,7 +2645,7 @@ function NestedNodeCard({
             library={library}
             currentEntryId={currentEntryId}
             depth={depth + 1}
-            branchId={`branch:nested-${depth}:sequence`}
+            branchId={nestedPath ? `${nestedPath}:sequence` : `branch:nested-${depth}:sequence`}
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 0 0' }}>
             <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.6, textTransform: 'uppercase', flexShrink: 0 }}>{t('script.sequenceEnd')}</span>
@@ -1593,7 +2665,7 @@ function NestedNodeCard({
         gap: 8,
         padding: '8px 12px',
         borderRadius: 8,
-        background: 'var(--c-elevated)',
+        background: 'var(--c-node-bg)',
         border: '1px solid var(--c-border)',
         borderLeft: `3px solid ${nodeColor}`,
         flexWrap: 'wrap',
@@ -1605,7 +2677,7 @@ function NestedNodeCard({
         onPointerDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
       >
-        <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} currentEntryId={currentEntryId} availableVars={availableVars} />
+        <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} currentEntryId={currentEntryId} availableVars={availableVars} availableVarInfos={availableVarInfos} />
       </div>
       {deleteBtn}
     </div>
@@ -1647,7 +2719,7 @@ function SortableNestedCard({ id, branchId, index, actions, onReorder, ...cardPr
  * NestedActionListSimple — recursive action list for deeply nested control flow.
  * Supports drag-and-drop insertion via useDroppable and reordering via SortableContext.
  */
-function NestedActionListSimple({ color, actions, onChange, nodeStyle, library, currentEntryId, depth, branchId }: {
+function NestedActionListSimple({ color, actions, onChange, nodeStyle, library, currentEntryId, depth, branchId, parentVars, parentVarInfos }: {
   color: string
   actions: ActionConfig[]
   onChange: (actions: ActionConfig[]) => void
@@ -1656,6 +2728,8 @@ function NestedActionListSimple({ color, actions, onChange, nodeStyle, library, 
   currentEntryId?: string
   depth: number
   branchId?: string
+  parentVars?: string[]
+  parentVarInfos?: VarInfo[]
 }): JSX.Element {
   const fallbackId = useRef(`branch-nested-${Math.random().toString(36).slice(2, 6)}`).current
   const effectiveBranchId = branchId ?? fallbackId
@@ -1698,6 +2772,9 @@ function NestedActionListSimple({ color, actions, onChange, nodeStyle, library, 
                 onDelete={() => deleteAction(idx)}
                 currentEntryId={currentEntryId}
                 depth={depth}
+                nestedPath={`${effectiveBranchId}:${idx}`}
+                availableVars={parentVars}
+                availableVarInfos={parentVarInfos}
               />
             ))}
           </div>
@@ -1707,25 +2784,142 @@ function NestedActionListSimple({ color, actions, onChange, nodeStyle, library, 
   )
 }
 
+// ── ReturnValueChip — small ~30% size chip shown below a node in picker mode ──
+
+function ReturnValueChip({ rv, nodeColor, nodeId }: {
+  rv: NodeReturnValue
+  nodeColor: string
+  nodeId: string
+}): JSX.Element {
+  const { pickerState, setHighlightNodeId } = React.useContext(ReturnValuePickerContext)
+
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    if (pickerState.onPick) {
+      pickerState.onPick(rv.ref)
+      setHighlightNodeId(nodeId)
+    }
+  }, [pickerState, rv.ref, setHighlightNodeId, nodeId])
+
+  const sourceIcon = SOURCE_ICON_MAP[rv.sourceType] ?? 'variable'
+
+  return (
+    <div
+      onClick={handleClick}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        padding: '3px 8px',
+        borderRadius: 6,
+        background: `${nodeColor}15`,
+        border: `1px solid ${nodeColor}40`,
+        cursor: 'pointer',
+        fontSize: 10,
+        fontWeight: 600,
+        color: nodeColor,
+        transition: 'all 0.15s',
+        marginTop: 4,
+        maxWidth: 'fit-content',
+        userSelect: 'none',
+      }}
+      onMouseEnter={(e) => {
+        const el = e.currentTarget
+        el.style.background = `${nodeColor}30`
+        el.style.borderColor = `${nodeColor}80`
+        el.style.transform = 'scale(1.04)'
+      }}
+      onMouseLeave={(e) => {
+        const el = e.currentTarget
+        el.style.background = `${nodeColor}15`
+        el.style.borderColor = `${nodeColor}40`
+        el.style.transform = 'scale(1)'
+      }}
+      title={rv.ref}
+    >
+      <UIIcon name={sourceIcon} size={11} />
+      <span style={{ fontFamily: 'monospace', letterSpacing: '-0.02em' }}>{rv.label}</span>
+      <span style={{ opacity: 0.6, fontFamily: 'monospace', fontSize: 9 }}>{rv.ref}</span>
+    </div>
+  )
+}
+
+const SOURCE_ICON_MAP: Record<string, string> = {
+  'launch': 'launch',
+  'keyboard': 'keyboard',
+  'shell': 'shell',
+  'set-var': 'variable',
+  'calculate': 'calculate',
+  'run-shortcut': 'call_shortcut',
+  'loop': 'loop',
+  'stop': 'stop',
+  'mouse-move': 'mouse_move',
+  'mouse-click': 'mouse_click',
+}
+
 // ── SortableNode ───────────────────────────────────────────────────────────────
 
 interface SortableNodeProps {
   node: ActionNode
+  nodeIndex: number
   nodeStyle: NodeStyle
   onChange: (action: ActionConfig) => void
   onDelete: () => void
   errorMsg?: string
   library: ShortcutEntry[]
+  groups?: ShortcutGroup[]
+  resourceIcons?: ResourceIconEntry[]
   currentEntryId?: string
   availableVars?: string[]
+  availableVarInfos?: VarInfo[]
+  isGhost?: boolean
 }
 
-function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, currentEntryId, availableVars }: SortableNodeProps): JSX.Element {
+function SortableNode({ node, nodeIndex, nodeStyle, onChange, onDelete, errorMsg, library, groups, resourceIcons, currentEntryId, availableVars, availableVarInfos, isGhost }: SortableNodeProps): JSX.Element {
   const t = useT()
   const { action } = node
   const cfg = nodeStyle[action.type] ?? nodeStyle.shell
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: node._id })
+  const { pickerState, highlightNodeId, setHighlightNodeId } = React.useContext(ReturnValuePickerContext)
+  const returnValues = pickerState.active && nodeIndex < pickerState.requestingNodeIndex
+    ? getNodeReturnValues(action, nodeIndex, t) : null
   const hasError = Boolean(errorMsg)
+
+  // Highlight animation when this node's return value was picked
+  const nodeElRef = useRef<HTMLDivElement>(null)
+  const combinedRef = useCallback((el: HTMLDivElement | null) => {
+    setNodeRef(el)
+    nodeElRef.current = el
+  }, [setNodeRef])
+  const isHighlighted = highlightNodeId === node._id
+  useEffect(() => {
+    if (!isHighlighted || !nodeElRef.current) return
+    const el = nodeElRef.current
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    el.style.transition = 'transform 0.2s ease-out, box-shadow 0.2s ease-out'
+    el.style.transform = 'scale(1.03)'
+    el.style.boxShadow = `0 0 12px ${cfg.color}60`
+    el.style.zIndex = '10'
+    const t1 = setTimeout(() => {
+      el.style.transform = 'scale(1)'
+      el.style.boxShadow = 'none'
+    }, 350)
+    const t2 = setTimeout(() => {
+      el.style.transition = ''
+      el.style.zIndex = ''
+      setHighlightNodeId(null)
+    }, 600)
+    return () => {
+      clearTimeout(t1)
+      clearTimeout(t2)
+      // Reset styles immediately so previous animation doesn't linger
+      el.style.transform = ''
+      el.style.boxShadow = ''
+      el.style.transition = ''
+      el.style.zIndex = ''
+    }
+  }, [isHighlighted, cfg.color, setHighlightNodeId])
 
   // Resolve run-shortcut visual identity (icon + bg color from the referenced entry)
   const csEntry = action.type === 'run-shortcut'
@@ -1736,7 +2930,7 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
 
   const cardStyle: React.CSSProperties = {
     borderRadius: 8,
-    background: hasError ? 'rgba(239,68,68,0.06)' : 'var(--c-elevated)',
+    background: hasError ? 'rgba(239,68,68,0.06)' : 'var(--c-node-bg)',
     border: hasError ? '1px solid rgba(239,68,68,0.6)' : '1px solid var(--c-border)',
     borderLeft: `3px solid ${hasError ? '#ef4444' : nodeColor}`,
     padding: '8px 12px',
@@ -1748,11 +2942,11 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
     <div
       style={{
         display: 'flex', alignItems: 'center', gap: 6,
-        userSelect: 'none', flexShrink: 0,
+        userSelect: 'none', flexShrink: 0, marginRight: 4,
       }}
     >
       <span style={{ color: hasError ? '#ef4444' : nodeColor }}>{renderNodeIcon(hasError ? 'info' : nodeIcon, 14)}</span>
-      <span style={{ fontSize: 11, fontWeight: 700, color: hasError ? '#ef4444' : nodeColor, whiteSpace: 'nowrap' }}>
+      <span style={{ fontSize: 11, color: hasError ? '#ef4444' : nodeColor, whiteSpace: 'nowrap' }}>
         {cfg.label}
       </span>
     </div>
@@ -1777,9 +2971,9 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
   if (action.type === 'if-else') {
     const a = action as IfElseAction
     return (
-      <div ref={setNodeRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1, marginBottom: 6, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
+      <div ref={combinedRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : isGhost ? 0.45 : 1, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
         {/* Card: header row + divider + criteria only */}
-        <div style={cardStyle}>
+        <div style={{ ...cardStyle, ...(isGhost ? { borderStyle: 'dashed' } : undefined) }}>
           {/* Header: drag handle | [flex spacer] | match dropdown | delete */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {dragHandle}
@@ -1802,7 +2996,7 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
                   {errorMsg}
                 </div>
               )}
-              <ConditionMatchSelect action={a} onChange={onChange} />
+              <ConditionModeSelect action={a} onChange={onChange} />
             </div>
             {deleteBtn}
           </div>
@@ -1815,7 +3009,7 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
             onPointerDown={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}
           >
-            <ConditionCriteriaSection action={a} onChange={onChange} />
+            <ConditionCriteriaSection action={a} onChange={onChange} availableVars={availableVars} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} />
           </div>
         </div>
 
@@ -1826,6 +3020,13 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
         >
           <ConditionBranchesExternal action={a} onChange={onChange} nodeStyle={nodeStyle} library={library} nodeId={node._id} currentEntryId={currentEntryId} />
         </div>
+        {returnValues && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            {returnValues.map((rv) => (
+              <ReturnValueChip key={rv.ref} rv={rv} nodeColor={cfg.color} nodeId={node._id} />
+            ))}
+          </div>
+        )}
       </div>
     )
   }
@@ -1834,14 +3035,14 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
   if (action.type === 'loop') {
     const a = action as LoopAction
     return (
-      <div ref={setNodeRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1, marginBottom: 6, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
-        <div style={cardStyle}>
+      <div ref={combinedRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : isGhost ? 0.45 : 1, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
+        <div style={{ ...cardStyle, ...(isGhost ? { borderStyle: 'dashed' } : undefined) }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {dragHandle}
             <div
               style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexWrap: 'wrap' }}
             >
-              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} currentEntryId={currentEntryId} availableVars={availableVars} />
+              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} groups={groups} resourceIcons={resourceIcons} currentEntryId={currentEntryId} availableVars={availableVars} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} />
             </div>
             {deleteBtn}
           </div>
@@ -1850,8 +3051,15 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
           onPointerDown={(e) => e.stopPropagation()}
           onKeyDown={(e) => e.stopPropagation()}
         >
-          <LoopBranchesExternal action={a} onChange={onChange} nodeStyle={nodeStyle} library={library} nodeId={node._id} currentEntryId={currentEntryId} />
+          <LoopBranchesExternal action={a} onChange={onChange} nodeStyle={nodeStyle} library={library} nodeId={node._id} currentEntryId={currentEntryId} availableVars={availableVars} availableVarInfos={availableVarInfos} />
         </div>
+        {returnValues && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            {returnValues.map((rv) => (
+              <ReturnValueChip key={rv.ref} rv={rv} nodeColor={cfg.color} nodeId={node._id} />
+            ))}
+          </div>
+        )}
       </div>
     )
   }
@@ -1860,14 +3068,14 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
   if (action.type === 'sequence') {
     const a = action as SequenceAction
     return (
-      <div ref={setNodeRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1, marginBottom: 6, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
-        <div style={cardStyle}>
+      <div ref={combinedRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : isGhost ? 0.45 : 1, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
+        <div style={{ ...cardStyle, ...(isGhost ? { borderStyle: 'dashed' } : undefined) }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {dragHandle}
             <div
               style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexWrap: 'wrap' }}
             >
-              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} currentEntryId={currentEntryId} availableVars={availableVars} />
+              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} groups={groups} resourceIcons={resourceIcons} currentEntryId={currentEntryId} availableVars={availableVars} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} />
             </div>
             {deleteBtn}
           </div>
@@ -1878,6 +3086,201 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
         >
           <SequenceBranchesExternal action={a} onChange={onChange} nodeStyle={nodeStyle} library={library} nodeId={node._id} currentEntryId={currentEntryId} />
         </div>
+        {returnValues && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            {returnValues.map((rv) => (
+              <ReturnValueChip key={rv.ref} rv={rv} nodeColor={cfg.color} nodeId={node._id} />
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── List node — define mode ────────────────────────────────────────────────────
+  if (action.type === 'list' && (action as ListAction).mode !== 'edit') {
+    const a = action as ListAction
+    const listItems = a.listItems ?? []
+    const inp: React.CSSProperties = {
+      background: 'var(--c-surface)',
+      border: '1px solid var(--c-border)',
+      borderRadius: 6,
+      color: 'var(--c-text)',
+      padding: '4px 8px',
+      fontSize: 12,
+      fontFamily: 'inherit',
+      outline: 'none',
+    }
+    const inpField: React.CSSProperties = {
+      ...inp,
+      background: 'var(--c-accent-bg)',
+      border: '1px solid var(--c-accent-border)',
+      fontWeight: 600,
+    }
+
+    return (
+      <div ref={combinedRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : isGhost ? 0.45 : 1, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
+        <div style={{ ...cardStyle, ...(isGhost ? { borderStyle: 'dashed' } : undefined) }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {dragHandle}
+            <div
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5, flexWrap: 'wrap' }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <CustomSelect
+                value={a.mode ?? 'define'}
+                onChange={(v) => onChange({ ...a, mode: v as VarMode })}
+                options={[
+                  { value: 'define', label: t('script.varModeDefine') },
+                  { value: 'edit', label: t('script.varModeEdit') },
+                ]}
+                style={{ ...inp, minWidth: 62 }}
+              />
+              <input
+                value={a.name}
+                onChange={(e) => onChange({ ...a, name: e.target.value })}
+                style={{ ...inpField, minWidth: 80 }}
+              />
+            </div>
+            {hasError && (
+              <div title={errorMsg} style={{ fontSize: 10, color: '#ef4444', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4, padding: '2px 5px', whiteSpace: 'nowrap', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 0, cursor: 'help' }}>
+                {errorMsg}
+              </div>
+            )}
+            {deleteBtn}
+          </div>
+          <div style={{ height: 1, background: `${cfg.color}33`, margin: '7px 0' }} />
+          <div onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+              {listItems.map((item, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ fontSize: 10, color: 'var(--c-text-dim)', width: 18, textAlign: 'right', flexShrink: 0 }}>{idx}</span>
+                  <input
+                    value={item}
+                    onChange={(e) => { const next = [...listItems]; next[idx] = e.target.value; onChange({ ...a, listItems: next }) }}
+                    style={{ ...inpField, minWidth: 60 }}
+                    size={Math.max(8, item.length + 1)}
+                  />
+                  <button
+                    onClick={() => onChange({ ...a, listItems: listItems.filter((_, i) => i !== idx) })}
+                    style={{ background: 'none', border: 'none', color: 'var(--c-text-dim)', cursor: 'pointer', padding: '0 2px', borderRadius: 4, display: 'flex', alignItems: 'center' }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#ef4444' }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-text-dim)' }}
+                  ><UIIcon name="close" size={12} /></button>
+                </div>
+              ))}
+              <button
+                onClick={() => onChange({ ...a, listItems: [...listItems, ''] })}
+                style={{ background: 'none', border: `1px dashed ${cfg.color}44`, borderRadius: 6, color: cfg.color, cursor: 'pointer', padding: '3px 8px', fontSize: 11, fontFamily: 'inherit', opacity: 0.8 }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = '1' }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = '0.8' }}
+              >{t('script.varAddItem')}</button>
+            </div>
+          </div>
+        </div>
+        {returnValues && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            {returnValues.map((rv) => (<ReturnValueChip key={rv.ref} rv={rv} nodeColor={cfg.color} nodeId={node._id} />))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── Dict node — define mode ────────────────────────────────────────────────────
+  if (action.type === 'dict' && (action as DictAction).mode !== 'edit') {
+    const a = action as DictAction
+    const dictItems = a.dictItems ?? []
+    const inp: React.CSSProperties = {
+      background: 'var(--c-surface)',
+      border: '1px solid var(--c-border)',
+      borderRadius: 6,
+      color: 'var(--c-text)',
+      padding: '4px 8px',
+      fontSize: 12,
+      fontFamily: 'inherit',
+      outline: 'none',
+    }
+    const inpField: React.CSSProperties = {
+      ...inp,
+      background: 'var(--c-accent-bg)',
+      border: '1px solid var(--c-accent-border)',
+      fontWeight: 600,
+    }
+
+    return (
+      <div ref={combinedRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : isGhost ? 0.45 : 1, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
+        <div style={{ ...cardStyle, ...(isGhost ? { borderStyle: 'dashed' } : undefined) }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {dragHandle}
+            <div
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 5, flexWrap: 'wrap' }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <CustomSelect
+                value={a.mode ?? 'define'}
+                onChange={(v) => onChange({ ...a, mode: v as VarMode })}
+                options={[
+                  { value: 'define', label: t('script.varModeDefine') },
+                  { value: 'edit', label: t('script.varModeEdit') },
+                ]}
+                style={{ ...inp, minWidth: 62 }}
+              />
+              <input
+                value={a.name}
+                onChange={(e) => onChange({ ...a, name: e.target.value })}
+                style={{ ...inpField, minWidth: 80 }}
+              />
+            </div>
+            {hasError && (
+              <div title={errorMsg} style={{ fontSize: 10, color: '#ef4444', background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 4, padding: '2px 5px', whiteSpace: 'nowrap', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', flexShrink: 0, cursor: 'help' }}>
+                {errorMsg}
+              </div>
+            )}
+            {deleteBtn}
+          </div>
+          <div style={{ height: 1, background: `${cfg.color}33`, margin: '7px 0' }} />
+          <div onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
+              {dictItems.map((entry, idx) => (
+                <div key={idx} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <input
+                    value={entry.key}
+                    onChange={(e) => { const next = [...dictItems]; next[idx] = { ...next[idx], key: e.target.value }; onChange({ ...a, dictItems: next }) }}
+                    style={{ ...inpField, minWidth: 60, flexShrink: 0 }}
+                    size={Math.max(6, entry.key.length + 1)}
+                  />
+                  <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>:</span>
+                  <input
+                    value={entry.value}
+                    onChange={(e) => { const next = [...dictItems]; next[idx] = { ...next[idx], value: e.target.value }; onChange({ ...a, dictItems: next }) }}
+                    style={{ ...inpField, minWidth: 60 }}
+                    size={Math.max(8, entry.value.length + 1)}
+                  />
+                  <button
+                    onClick={() => onChange({ ...a, dictItems: dictItems.filter((_, i) => i !== idx) })}
+                    style={{ background: 'none', border: 'none', color: 'var(--c-text-dim)', cursor: 'pointer', padding: '0 2px', borderRadius: 4, display: 'flex', alignItems: 'center' }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = '#ef4444' }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = 'var(--c-text-dim)' }}
+                  ><UIIcon name="close" size={12} /></button>
+                </div>
+              ))}
+              <button
+                onClick={() => onChange({ ...a, dictItems: [...dictItems, { key: '', value: '' }] })}
+                style={{ background: 'none', border: `1px dashed ${cfg.color}44`, borderRadius: 6, color: cfg.color, cursor: 'pointer', padding: '3px 8px', fontSize: 11, fontFamily: 'inherit', opacity: 0.8 }}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = '1' }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.opacity = '0.8' }}
+              >{t('script.varAddEntry')}</button>
+            </div>
+          </div>
+        </div>
+        {returnValues && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            {returnValues.map((rv) => (<ReturnValueChip key={rv.ref} rv={rv} nodeColor={cfg.color} nodeId={node._id} />))}
+          </div>
+        )}
       </div>
     )
   }
@@ -1885,14 +3288,14 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
   // ── Comment node — dimmed, no drag handle grab style ──────────────────────────
   if (action.type === 'comment') {
     return (
-      <div ref={setNodeRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.3 : 0.7, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
-        <div style={{ ...cardStyle, marginBottom: 6, borderStyle: 'dashed', borderColor: 'var(--c-border)' }}>
+      <div ref={combinedRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.3 : isGhost ? 0.45 : 0.7, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
+        <div style={{ ...cardStyle, borderStyle: 'dashed', borderColor: 'var(--c-border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             {dragHandle}
             <div
               style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}
             >
-              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} currentEntryId={currentEntryId} availableVars={availableVars} />
+              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} groups={groups} resourceIcons={resourceIcons} currentEntryId={currentEntryId} availableVars={availableVars} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} />
             </div>
             {deleteBtn}
           </div>
@@ -1904,8 +3307,8 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
   // ── Default layout (all other node types) ─────────────────────────────────────
 
   return (
-    <div ref={setNodeRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
-      <div style={{ ...cardStyle, marginBottom: 6 }}>
+    <div ref={combinedRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : isGhost ? 0.45 : 1, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
+      <div style={{ ...cardStyle, ...(isGhost ? { borderStyle: 'dashed' } : undefined) }}>
         {/* Header row: drag handle | inputs (right) | error badge | delete */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           {dragHandle}
@@ -1913,7 +3316,7 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
           <div
             style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, minWidth: 0, flexWrap: 'wrap' }}
           >
-            <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} currentEntryId={currentEntryId} availableVars={availableVars} />
+            <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} groups={groups} resourceIcons={resourceIcons} currentEntryId={currentEntryId} availableVars={availableVars} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} />
           </div>
 
           {hasError && (
@@ -1936,101 +3339,317 @@ function SortableNode({ node, nodeStyle, onChange, onDelete, errorMsg, library, 
           {deleteBtn}
         </div>
       </div>
+      {returnValues && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+          {returnValues.map((rv) => (
+            <ReturnValueChip key={rv.ref} rv={rv} nodeColor={nodeColor} nodeId={node._id} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── PaletteContextMenu — right-click menu for palette items ─────────────────────
+
+function PaletteContextMenu({ x, y, onAddToStart, onAddToEnd, onClose }: {
+  x: number; y: number
+  onAddToStart: () => void
+  onAddToEnd: () => void
+  onClose: () => void
+}): JSX.Element {
+  const t = useT()
+  const ref = useRef<HTMLDivElement>(null)
+  const [clamped, setClamped] = useState({ top: y, left: x })
+
+  useLayoutEffect(() => {
+    if (ref.current) setClamped(clampMenuPosition(ref.current, { top: y, left: x }))
+  }, [x, y])
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  const itemStyle: React.CSSProperties = {
+    padding: '6px 12px', fontSize: 12, cursor: 'pointer',
+    display: 'flex', alignItems: 'center', gap: 8,
+    width: '100%', color: 'var(--c-text)', whiteSpace: 'nowrap',
+    background: 'none', border: 'none', fontFamily: 'inherit',
+    textAlign: 'left', transition: 'background 0.1s',
+    boxSizing: 'border-box',
+  }
+
+  return (
+    <div ref={ref} style={{
+      position: 'fixed', left: clamped.left, top: clamped.top, zIndex: 9999,
+      background: 'var(--c-elevated)', border: '1px solid var(--c-border)',
+      borderRadius: 8, boxShadow: '0 6px 24px rgba(0,0,0,0.4)',
+      padding: '4px 0', minWidth: 168,
+    }}>
+      <button style={itemStyle}
+        onMouseDown={(e) => e.preventDefault()}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--c-border)' }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'none' }}
+        onClick={() => { onAddToStart(); onClose() }}
+      >{t('shortcuts.addToStart')}</button>
+      <button style={itemStyle}
+        onMouseDown={(e) => e.preventDefault()}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--c-border)' }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'none' }}
+        onClick={() => { onAddToEnd(); onClose() }}
+      >{t('shortcuts.addToEnd')}</button>
     </div>
   )
 }
 
 // ── LibraryItem — draggable palette item ───────────────────────────────────────
 
-function LibraryItem({ type, cfg }: { type: string; cfg: NodeStyle[string] }): JSX.Element {
+function LibraryItem({ type, cfg, onAddToStart, onAddToEnd }: {
+  type: string; cfg: NodeStyle[string]
+  onAddToStart?: (type: string) => void
+  onAddToEnd?: (type: string) => void
+}): JSX.Element {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: `lib-${type}`,
     data: { type },
   })
+  const [ctx, setCtx] = useState<{ x: number; y: number } | null>(null)
 
   return (
-    <div
-      ref={setNodeRef}
-      {...attributes}
-      {...listeners}
-      style={{
-        width: '100%',
-        display: 'flex',
-        alignItems: 'center',
-        gap: 7,
-        padding: '5px 10px',
-        borderRadius: 6,
-        background: 'none',
-        cursor: isDragging ? 'grabbing' : 'grab',
-        marginBottom: 1,
-        opacity: isDragging ? 0.4 : 1,
-        userSelect: 'none',
-        transition: 'background 0.1s',
-        boxSizing: 'border-box',
-      }}
-      onMouseEnter={(e) => { if (!isDragging) (e.currentTarget as HTMLElement).style.background = 'var(--c-elevated)' }}
-      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'none' }}
-    >
-      <div style={{
-        width: 16, height: 16, borderRadius: 4,
-        background: cfg.color + '22',
-        border: `1px solid ${cfg.color}55`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        flexShrink: 0, color: cfg.color,
-      }}><UIIcon name={cfg.icon} size={11} /></div>
-      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--c-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>
-        {cfg.label}
-      </span>
-    </div>
+    <>
+      <div
+        ref={setNodeRef}
+        {...attributes}
+        {...listeners}
+        style={{
+          width: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 7,
+          padding: '5px 10px',
+          borderRadius: 6,
+          background: 'none',
+          cursor: isDragging ? 'grabbing' : 'grab',
+          marginBottom: 1,
+          opacity: isDragging ? 0.4 : 1,
+          userSelect: 'none',
+          transition: 'background 0.1s',
+          boxSizing: 'border-box',
+        }}
+        onMouseEnter={(e) => { if (!isDragging) (e.currentTarget as HTMLElement).style.background = 'var(--c-elevated)' }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'none' }}
+        onContextMenu={(e) => { e.preventDefault(); setCtx({ x: e.clientX, y: e.clientY }) }}
+      >
+        <div style={{
+          width: 16, height: 16, borderRadius: 4,
+          background: cfg.color + '22',
+          border: `1px solid ${cfg.color}55`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          flexShrink: 0, color: cfg.color,
+        }}><UIIcon name={cfg.icon} size={11} /></div>
+        <span style={{ fontSize: 12, color: 'var(--c-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0 }}>
+          {cfg.label}
+        </span>
+      </div>
+      {ctx && onAddToStart && onAddToEnd && (
+        <PaletteContextMenu
+          x={ctx.x} y={ctx.y}
+          onAddToStart={() => onAddToStart(type)}
+          onAddToEnd={() => onAddToEnd(type)}
+          onClose={() => setCtx(null)}
+        />
+      )}
+    </>
   )
 }
 
-// ── ShortcutLibraryItem — draggable run-shortcut entry ────────────────────────
+// ── Resolve icon for a ShortcutEntry ─────────────────────────────────────────
 
-function ShortcutLibraryItem({ entry }: { entry: ShortcutEntry }): JSX.Element {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: `lib-run-shortcut-${entry.id}`,
-    data: { type: 'run-shortcut', shortcutId: entry.id },
+function resolveEntryIcon(entry: ShortcutEntry, resourceIcons: ResourceIconEntry[], size = 11): JSX.Element {
+  if (!entry.icon) return <UIIcon name="call_shortcut" size={size} />
+  if (entry.iconIsCustom && entry.icon.endsWith('.svg')) {
+    const resource = resourceIcons.find((e) => e.absPath === entry.icon)
+    return resource ? <SVGIcon svgString={resource.svgContent} size={size} /> : <UIIcon name="call_shortcut" size={size} />
+  }
+  if (!entry.iconIsCustom) {
+    const builtin = BUILTIN_ICONS.find((ic) => ic.name === entry.icon)
+    return builtin ? <SVGIcon svgString={builtin.svg} size={size} /> : <UIIcon name={entry.icon} size={size} />
+  }
+  return <UIIcon name="call_shortcut" size={size} />
+}
+
+// ── ShortcutPickerMenu — gallery context menu for Run Shortcut ──────────────
+
+function ShortcutPickerMenu({ library, groups, resourceIcons, selectedId, onSelect, onClose, pos, onPickVariable, onPickReturnValue }: {
+  library: ShortcutEntry[]
+  groups: ShortcutGroup[]
+  resourceIcons: ResourceIconEntry[]
+  selectedId: string
+  onSelect: (shortcutId: string) => void
+  onClose: () => void
+  pos: { top: number; left: number }
+  onPickVariable?: () => void
+  onPickReturnValue?: () => void
+}): JSX.Element {
+  const t = useT()
+  const menuRef = useRef<HTMLDivElement>(null)
+  const [search, setSearch] = useState('')
+  const [groupFilter, setGroupFilter] = useState('all')
+  const [clampedPos, setClampedPos] = useState(pos)
+  const searchRef = useRef<HTMLInputElement>(null)
+
+  useLayoutEffect(() => {
+    if (menuRef.current) setClampedPos(clampMenuPosition(menuRef.current, pos))
+  }, [pos])
+
+  useEffect(() => { searchRef.current?.focus() }, [])
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  const filtered = library.filter((entry) => {
+    const matchesSearch = !search || entry.name.toLowerCase().includes(search.toLowerCase())
+    const matchesGroup = groupFilter === 'all' || entry.groupId === groupFilter
+    return matchesSearch && matchesGroup
   })
 
-  // Derive icon and color from the entry's own metadata
-  const entryColor = entry.bgColor ?? '#22d3ee'
-  const entryIconName = entry.icon ?? 'call_shortcut'
+  const itemStyle: React.CSSProperties = {
+    padding: '5px 10px', fontSize: 12, cursor: 'pointer',
+    display: 'flex', alignItems: 'center', gap: 7,
+    color: 'var(--c-text)', borderRadius: 4,
+  }
 
-  return (
+  return createPortal(
     <div
-      ref={setNodeRef}
-      {...attributes}
-      {...listeners}
+      ref={menuRef}
       style={{
-        width: '100%',
+        position: 'fixed',
+        top: clampedPos.top,
+        left: clampedPos.left,
+        width: 240,
+        maxHeight: 320,
         display: 'flex',
-        alignItems: 'center',
-        gap: 7,
-        padding: '5px 10px',
-        borderRadius: 6,
-        background: 'none',
-        cursor: isDragging ? 'grabbing' : 'grab',
-        marginBottom: 1,
-        opacity: isDragging ? 0.4 : 1,
-        userSelect: 'none',
-        transition: 'background 0.1s',
-        boxSizing: 'border-box',
+        flexDirection: 'column',
+        background: 'var(--c-elevated, #1e1e2e)',
+        border: '1px solid var(--c-border, #333)',
+        borderRadius: 8,
+        boxShadow: '0 8px 24px rgba(0,0,0,0.4)',
+        zIndex: 9999,
       }}
-      onMouseEnter={(e) => { if (!isDragging) (e.currentTarget as HTMLElement).style.background = 'var(--c-elevated)' }}
-      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'none' }}
     >
-      <div style={{
-        width: 16, height: 16, borderRadius: 4,
-        background: entryColor + '22',
-        border: `1px solid ${entryColor}55`,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        flexShrink: 0, color: entryColor,
-      }}><UIIcon name={entryIconName} size={11} /></div>
-      <span style={{ flex: 1, minWidth: 0, fontSize: 12, fontWeight: 600, color: 'var(--c-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-        {entry.name || '(unnamed)'}
-      </span>
-    </div>
+      {/* Search */}
+      <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--c-border, #333)' }}>
+        <input
+          ref={searchRef}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={t('modal.searchActions')}
+          style={{
+            width: '100%', background: 'var(--c-surface)', border: '1px solid var(--c-border)',
+            borderRadius: 6, color: 'var(--c-text)', padding: '4px 8px', fontSize: 12,
+            fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box',
+          }}
+        />
+      </div>
+
+      {/* Group filter */}
+      {groups.length > 0 && (
+        <div style={{ padding: '4px 8px', borderBottom: '1px solid var(--c-border, #333)' }}>
+          <CustomSelect
+            value={groupFilter}
+            onChange={(v) => setGroupFilter(v)}
+            options={[
+              { value: 'all', label: t('palette.allGroups') },
+              ...groups.map((g) => ({ value: g.id, label: g.name })),
+            ]}
+            style={{
+              width: '100%', padding: '3px 6px', borderRadius: 5,
+              border: '1px solid var(--c-border)', background: 'var(--c-surface)',
+              color: 'var(--c-text)', fontSize: 11, fontFamily: 'inherit',
+              outline: 'none', boxSizing: 'border-box',
+            }}
+          />
+        </div>
+      )}
+
+      {/* Shortcut list */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+        {filtered.length === 0 && (
+          <div style={{ fontSize: 11, color: 'var(--c-text-dim)', padding: '12px 10px', textAlign: 'center' }}>
+            {library.length === 0 ? t('script.noShortcuts') : 'No matching shortcuts'}
+          </div>
+        )}
+        {filtered.map((entry) => {
+          const entryColor = entry.bgColor ?? '#22d3ee'
+          const isSelected = entry.id === selectedId
+          return (
+            <div
+              key={entry.id}
+              onClick={() => { onSelect(entry.id); onClose() }}
+              style={{
+                ...itemStyle,
+                background: isSelected ? 'var(--c-accent-subtle, rgba(99,102,241,0.15))' : 'transparent',
+              }}
+              onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'var(--c-hover, rgba(255,255,255,0.08))' }}
+              onMouseLeave={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+            >
+              <div style={{
+                width: 16, height: 16, borderRadius: 4,
+                background: entryColor + '22', border: `1px solid ${entryColor}55`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                flexShrink: 0, color: entryColor,
+              }}>
+                {resolveEntryIcon(entry, resourceIcons)}
+              </div>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontWeight: isSelected ? 600 : 400 }}>
+                {entry.name || '(unnamed)'}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Divider + variable/return value options */}
+      {(onPickVariable || onPickReturnValue) && (
+        <>
+          <div style={{ height: 1, background: 'var(--c-border, #333)' }} />
+          <div style={{ padding: '4px 0' }}>
+            {onPickVariable && (
+              <div
+                onClick={() => { onPickVariable(); onClose() }}
+                style={itemStyle}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--c-hover, rgba(255,255,255,0.08))' }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+              >
+                <UIIcon name="variable" size={14} />
+                <span>{t('script.pickFromVariable')}</span>
+              </div>
+            )}
+            {onPickReturnValue && (
+              <div
+                onClick={() => { onPickReturnValue(); onClose() }}
+                style={itemStyle}
+                onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--c-hover, rgba(255,255,255,0.08))' }}
+                onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+              >
+                <UIIcon name="output" size={14} />
+                <span>{t('script.pickFromReturnValue')}</span>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>,
+    document.body,
   )
 }
 
@@ -2185,6 +3804,89 @@ function DeleteDropZone({ children, style, active, mode }: { children: ReactNode
   )
 }
 
+// ── ValuePaletteItem — draggable value in the Values tab ─────────────────────
+
+interface ValueEntry {
+  ref: string
+  label: string
+  sourceType: string
+  definedAtIndex: number
+  color: string
+  nodeId: string
+}
+
+function ValuePaletteItem({ entry }: { entry: ValueEntry }): JSX.Element {
+  const { setDragState } = useContext(ValueDragContext)
+  const { setHighlightNodeId } = useContext(ReturnValuePickerContext)
+  const icon = getSourceIcon(entry.sourceType)
+
+  const handleClick = useCallback(() => {
+    setHighlightNodeId(entry.nodeId)
+  }, [entry.nodeId, setHighlightNodeId])
+
+  const handleDragStart = useCallback((e: React.DragEvent) => {
+    e.dataTransfer.effectAllowed = 'copy'
+    e.dataTransfer.setData('text/plain', entry.ref)
+    setDragState({
+      active: true,
+      ref: entry.ref,
+      definedAtIndex: entry.definedAtIndex,
+      sourceType: entry.sourceType,
+      label: entry.label,
+    })
+  }, [entry, setDragState])
+
+  const handleDragEnd = useCallback(() => {
+    setDragState({ active: false, ref: '', definedAtIndex: -1, sourceType: '', label: '' })
+  }, [setDragState])
+
+  return (
+    <div
+      draggable
+      onClick={handleClick}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      style={{
+        width: '100%',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 7,
+        padding: '5px 10px',
+        borderRadius: 6,
+        background: 'none',
+        cursor: 'grab',
+        marginBottom: 1,
+        userSelect: 'none',
+        transition: 'background 0.1s',
+        boxSizing: 'border-box',
+      }}
+      onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--c-elevated)' }}
+      onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'none' }}
+    >
+      <span style={{
+        width: 16, height: 16, borderRadius: 4,
+        background: entry.color + '22',
+        border: `1px solid ${entry.color}55`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        flexShrink: 0, color: entry.color,
+      }}><UIIcon name={icon} size={11} /></span>
+      <span style={{
+        fontSize: 12, fontWeight: 600, fontFamily: 'monospace',
+        color: entry.color,
+        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', flex: 1, minWidth: 0,
+      }}>
+        {entry.label}
+      </span>
+      <span style={{
+        fontSize: 9, color: 'var(--c-text-dim)', flexShrink: 0,
+        opacity: 0.7,
+      }}>
+        #{entry.definedAtIndex + 1}
+      </span>
+    </div>
+  )
+}
+
 // ── PaletteTabBar — centered icon-only tabs ────────────────────────────────────
 
 interface PaletteTabBarProps {
@@ -2196,9 +3898,9 @@ function PaletteTabBar({ active, onChange }: PaletteTabBarProps): JSX.Element {
   const t = useT()
   const tabs: { id: PaletteTab; icon: string; title: string }[] = [
     { id: 'all',       icon: 'menu',       title: t('palette.all') },
-    { id: 'actions',   icon: 'play_arrow', title: t('palette.actions') },
-    { id: 'scripts',   icon: 'launch',     title: t('palette.scripts') },
-    { id: 'shortcuts', icon: 'link',       title: t('palette.shortcuts') },
+    { id: 'actions',   icon: 'system', title: t('palette.actions') },
+    { id: 'scripts',   icon: 'script',     title: t('palette.scripts') },
+    { id: 'values',    icon: 'variable',   title: t('palette.values') },
   ]
 
   return (
@@ -2251,6 +3953,41 @@ function PaletteTabBar({ active, onChange }: PaletteTabBarProps): JSX.Element {
   )
 }
 
+// ── MajorCategoryHeader — centered label with thin dividers ─────────────────
+
+function MajorCategoryHeader({ label }: { label: string }): JSX.Element {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 8,
+      padding: '8px 4px 4px',
+    }}>
+      <div style={{ flex: 1, height: 1, background: 'var(--c-border-sub)' }} />
+      <span style={{
+        fontSize: 9, fontWeight: 700, letterSpacing: '0.08em',
+        color: 'var(--c-text-dim)', textTransform: 'uppercase', whiteSpace: 'nowrap',
+      }}>
+        {label}
+      </span>
+      <div style={{ flex: 1, height: 1, background: 'var(--c-border-sub)' }} />
+    </div>
+  )
+}
+
+// ── SubCategoryHeader — left-aligned small label ────────────────────────────
+
+function SubCategoryHeader({ label, first }: { label: string; first?: boolean }): JSX.Element {
+  return (
+    <div style={{
+      fontSize: 9, fontWeight: 600, letterSpacing: '0.06em',
+      color: 'var(--c-text-dim)', opacity: 0.7,
+      padding: first ? '2px 4px 3px' : '6px 4px 3px',
+      textTransform: 'uppercase',
+    }}>
+      {label}
+    </div>
+  )
+}
+
 // ── IconColorPopover ───────────────────────────────────────────────────────────
 
 interface IconColorPopoverProps {
@@ -2274,6 +4011,11 @@ function IconColorPopover({
   const [search, setSearch] = useState('')
   const [customColorOpen, setCustomColorOpen] = useState(false)
   const [customColor, setCustomColor] = useState(slot.bgColor ?? '#3a3f4b')
+  const [clampedPos, setClampedPos] = useState(pos)
+
+  useLayoutEffect(() => {
+    if (popoverRef.current) setClampedPos(clampMenuPosition(popoverRef.current, pos))
+  }, [pos])
 
   // Close on outside click (deferred to avoid closing immediately on open)
   useEffect(() => {
@@ -2305,8 +4047,8 @@ function IconColorPopover({
       ref={popoverRef}
       style={{
         position: 'fixed',
-        top: pos.top,
-        left: pos.left,
+        top: clampedPos.top,
+        left: clampedPos.left,
         width: POPUP_WIDTH,
         maxHeight: '80vh',
         background: 'var(--c-surface)',
@@ -2406,7 +4148,7 @@ function IconColorPopover({
                   }}
                   style={{
                     flex: 1,
-                    background: 'var(--c-input-bg)', border: '1px solid var(--c-border)',
+                    background: 'var(--c-surface)', border: '1px solid var(--c-border)',
                     borderRadius: 5, color: 'var(--c-text)', padding: '4px 8px',
                     fontSize: 11, fontFamily: 'monospace', outline: 'none',
                     boxSizing: 'border-box' as const,
@@ -2464,7 +4206,7 @@ function IconColorPopover({
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search icons…"
               style={{
-                width: '100%', background: 'var(--c-input-bg)',
+                width: '100%', background: 'var(--c-surface)',
                 border: '1px solid var(--c-border)', borderRadius: 6,
                 color: 'var(--c-text)', padding: '4px 8px',
                 fontSize: 11, fontFamily: 'inherit', outline: 'none',
@@ -2528,9 +4270,18 @@ function ShortcutsEditorInner(): JSX.Element {
   const isFirstUpdateRef = useRef(true)
 
   // Current editing state
-  const [nodes, setNodes] = useState<ActionNode[]>([])
+  const [nodes, _setNodes] = useState<ActionNode[]>([])
   const nodesRef = useRef<ActionNode[]>([])
-  useEffect(() => { nodesRef.current = nodes }, [nodes])
+  // Synchronously update nodesRef whenever nodes change so that DnD handlers
+  // (handleDragEnd in particular) always read the latest value even when
+  // React hasn't flushed the render yet.
+  const setNodes: typeof _setNodes = useCallback((update) => {
+    _setNodes((prev) => {
+      const next = typeof update === 'function' ? (update as (p: ActionNode[]) => ActionNode[])(prev) : update
+      nodesRef.current = next
+      return next
+    })
+  }, [])
 
   const [slotLabel, setSlotLabel] = useState('')
 
@@ -2549,7 +4300,6 @@ function ShortcutsEditorInner(): JSX.Element {
   // Palette tab + search
   const [paletteTab, setPaletteTab] = useState<PaletteTab>('all')
   const [search, setSearch] = useState('')
-  const [groupFilter, setGroupFilter] = useState<string>('all')
 
   // Resizable panel width
   const [libWidth, setLibWidth] = useState(240)
@@ -2573,21 +4323,260 @@ function ShortcutsEditorInner(): JSX.Element {
   const [dropIndex, setDropIndex] = useState<number | null>(null)
   const dropIndexRef = useRef<number | null>(null)
   useEffect(() => { dropIndexRef.current = dropIndex }, [dropIndex])
-  const [branchDrop, setBranchDrop] = useState<{ nodeId: string; branch: 'then' | 'else' | 'loop' | 'sequence' } | null>(null)
-  const branchDropRef = useRef<{ nodeId: string; branch: 'then' | 'else' | 'loop' | 'sequence' } | null>(null)
+  const [branchDrop, setBranchDrop] = useState<{ branchId: string } | null>(null)
+  const branchDropRef = useRef<{ branchId: string } | null>(null)
   useEffect(() => { branchDropRef.current = branchDrop }, [branchDrop])
   const preDragNodesRef = useRef<ActionNode[] | null>(null)
   const libInsertedIdRef = useRef<string | null>(null)
   const libActionRef = useRef<ActionConfig | null>(null)
 
+  // Safety net: reset drag state on pointerup if dnd-kit missed the end event
+  const activeDragIdRef = useRef<string | null>(null)
+  useEffect(() => { activeDragIdRef.current = activeDragId }, [activeDragId])
+  useEffect(() => {
+    const handlePointerUp = () => {
+      // Give dnd-kit a frame to process its own dragEnd/dragCancel first
+      requestAnimationFrame(() => {
+        if (activeDragIdRef.current !== null) {
+          // dnd-kit didn't clean up — force reset
+          setActiveDragId(null)
+          setDropIndex(null)
+          setBranchDrop(null)
+          if (preDragNodesRef.current) {
+            setNodes(preDragNodesRef.current)
+            preDragNodesRef.current = null
+          }
+          libInsertedIdRef.current = null
+          libActionRef.current = null
+        }
+      })
+    }
+    window.addEventListener('pointerup', handlePointerUp)
+    return () => window.removeEventListener('pointerup', handlePointerUp)
+  }, [])
+
+  // Tab navigation: intercept Tab on regular inputs inside the workspace
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return
+      const target = e.target as HTMLElement
+      // Only handle for regular inputs/selects/textareas inside the workspace
+      // (VariableInput handles its own Tab key)
+      if (target.hasAttribute('data-variable-input')) return
+      const workspace = document.querySelector('[data-workspace]')
+      if (!workspace || !workspace.contains(target)) return
+      const tag = target.tagName
+      if (tag !== 'INPUT' && tag !== 'SELECT' && tag !== 'TEXTAREA') return
+      // Skip hidden/checkbox/radio inputs
+      if (tag === 'INPUT') {
+        const inputType = (target as HTMLInputElement).type
+        if (inputType === 'hidden' || inputType === 'checkbox' || inputType === 'radio') return
+      }
+      e.preventDefault()
+      focusNextTabField(target, e.shiftKey)
+    }
+    window.addEventListener('keydown', handleKeyDown, true) // capture phase
+    return () => window.removeEventListener('keydown', handleKeyDown, true)
+  }, [])
+
   const isLibDrag = activeDragId?.startsWith('lib-') ?? false
   const activeLibType = isLibDrag ? (activeDragId!.startsWith('lib-run-shortcut-') ? 'run-shortcut' : activeDragId!.replace('lib-', '')) : null
   const activeNode = (!isLibDrag && activeDragId) ? nodesRef.current.find(n => n._id === activeDragId) ?? null : null
+
+  // Return value picker state
+  const [rvPickerState, setRvPickerState] = useState<ReturnValuePickerState>({ active: false, onPick: null, requestingNodeIndex: Infinity })
+  const [highlightNodeId, setHighlightNodeId] = useState<string | null>(null)
+
+  // Value drag state (for dragging values from palette to inputs)
+  const [valueDragState, setValueDragState] = useState<ValueDragState>({ active: false, ref: '', definedAtIndex: -1, sourceType: '', label: '' })
+  const [forbiddenTooltip, setForbiddenTooltip] = useState<{ x: number; y: number; visible: boolean }>({ x: 0, y: 0, visible: false })
+  const valueDragCtx = useMemo(() => ({
+    dragState: valueDragState,
+    setDragState: setValueDragState,
+    forbiddenTooltip,
+    setForbiddenTooltip,
+  }), [valueDragState, forbiddenTooltip])
+
+  // Resolve return-value ref → source node visual info
+  const resolveReturnValueMeta = useCallback((ref: string): ReturnValueNodeMeta | null => {
+    if (!ref.startsWith('$')) return null
+    const currentNodes = nodesRef.current
+    for (let i = 0; i < currentNodes.length; i++) {
+      const rvs = getNodeReturnValues(currentNodes[i].action, i, t)
+      if (!rvs) continue
+      const match = rvs.find(rv => rv.ref === ref)
+      if (match) {
+        const a = currentNodes[i].action
+        const cfg = NODE_STYLE[a.type] ?? NODE_STYLE.shell
+        // For run-shortcut, resolve visual identity from library entry
+        let nodeIcon = cfg.icon
+        let nodeColor = cfg.color
+        let nodeLabel = cfg.label
+        // Show actual variable/resource name instead of generic type label
+        if (a.type === 'set-var') {
+          const sv = a as SetVarAction
+          if (sv.name) nodeLabel = sv.name.replace(/^\$/, '')
+        } else if (a.type === 'list') {
+          const la = a as ListAction
+          if (la.operation === 'get' && la.resultVar) nodeLabel = la.resultVar
+          else if (la.name) nodeLabel = la.name
+        } else if (a.type === 'dict') {
+          const da = a as DictAction
+          if (da.operation === 'get' && da.resultVar) nodeLabel = da.resultVar
+          else if (da.name) nodeLabel = da.name
+        } else if (a.type === 'calculate') {
+          const ca = a as CalculateAction
+          if (ca.resultVar) nodeLabel = ca.resultVar
+        } else if (a.type === 'run-shortcut') {
+          const lib = data?.shortcutsLibrary ?? []
+          const entry = lib.find(e => e.id === (a as RunShortcutAction).shortcutId)
+          if (entry) {
+            if (entry.icon) nodeIcon = entry.icon
+            if (entry.bgColor) nodeColor = entry.bgColor
+            nodeLabel = entry.name
+          }
+          const rs = a as RunShortcutAction
+          if (rs.outputVar) nodeLabel = rs.outputVar
+        } else if (a.type === 'stop') {
+          const sa = a as StopAction
+          if (sa.returnVar) nodeLabel = sa.returnVar
+        } else if (a.type === 'loop') {
+          const la = a as LoopAction
+          const mode = la.mode ?? 'repeat'
+          if (mode === 'for') nodeLabel = `${la.start ?? 0}..${la.end ?? 10}`
+          else if (mode === 'foreach' && la.itemVar) nodeLabel = la.itemVar
+        }
+        return { icon: nodeIcon, label: nodeLabel, color: nodeColor }
+      }
+    }
+    return null
+  }, [t, NODE_STYLE, data?.shortcutsLibrary])
+
+  // Collect return values from nodes preceding a given index — used by VariableInput suggestions
+  const getAvailableReturnValues = useCallback((beforeIndex: number): ReturnValueInfo[] => {
+    const results: ReturnValueInfo[] = []
+    const currentNodes = nodesRef.current
+    for (let i = 0; i < beforeIndex && i < currentNodes.length; i++) {
+      const a = currentNodes[i].action
+      const rvs = getNodeReturnValues(a, i, t)
+      if (rvs) {
+        const nodeCfg = NODE_STYLE[a.type] ?? NODE_STYLE.shell
+        const nodeLabel = nodeCfg.label
+        for (const rv of rvs) {
+          results.push({ ref: rv.ref, label: `${nodeLabel} · ${rv.label}`, sourceType: rv.sourceType })
+        }
+      }
+    }
+    return results
+  }, [t, NODE_STYLE])
+
+  const rvPickerCtx = React.useMemo(() => ({
+    pickerState: rvPickerState,
+    requestPick: (nodeIndex: number, onPick: (ref: string) => void) => {
+      setRvPickerState({ active: true, requestingNodeIndex: nodeIndex, onPick: (ref: string) => { onPick(ref); setRvPickerState({ active: false, onPick: null, requestingNodeIndex: Infinity }) } })
+    },
+    cancelPick: () => setRvPickerState({ active: false, onPick: null, requestingNodeIndex: Infinity }),
+    resolveReturnValueMeta,
+    highlightNodeId,
+    setHighlightNodeId,
+    getAvailableReturnValues,
+  }), [rvPickerState, resolveReturnValueMeta, highlightNodeId, getAvailableReturnValues])
+
+  // Cancel return value picker on Escape
+  useEffect(() => {
+    if (!rvPickerState.active) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setRvPickerState({ active: false, onPick: null, requestingNodeIndex: Infinity })
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [rvPickerState.active])
 
   const sensors = useSensors(
     useSensor(SmartPointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
+
+  // ── Custom collision detection — prioritise branch drop zones ──────────────
+  // Moved inside the component so it can exclude the lib-drag ghost node from
+  // sortable containers, preventing closestCenter from returning the ghost
+  // and causing a dead-zone where the ghost can't move to first/last position.
+  const collisionDetection = useCallback<CollisionDetection>((args) => {
+    const activeId = args.active.id.toString()
+    const isNestedDrag = activeId.startsWith('nested:')
+    const ghostId = libInsertedIdRef.current
+
+    const nestedContainers: DroppableContainer[] = []
+    const branchContainers: DroppableContainer[] = []
+    const sortableContainers: DroppableContainer[] = []
+    const zoneContainers: DroppableContainer[] = []
+    for (const container of args.droppableContainers) {
+      const id = container.id.toString()
+      if (id === ghostId) continue // exclude lib-drag ghost from collision targets
+      if (id.startsWith('nested:')) {
+        nestedContainers.push(container)
+      } else if (id.startsWith('branch:')) {
+        branchContainers.push(container)
+      } else if (ZONE_IDS.has(id)) {
+        zoneContainers.push(container)
+      } else {
+        sortableContainers.push(container)
+      }
+    }
+
+    if (isNestedDrag) {
+      if (zoneContainers.length > 0) {
+        const zoneHits = rectIntersection({ ...args, droppableContainers: zoneContainers })
+        if (zoneHits.length > 0) {
+          const branchHits = branchContainers.length > 0
+            ? rectIntersection({ ...args, droppableContainers: branchContainers })
+            : []
+          if (branchHits.length === 0) return zoneHits
+        }
+      }
+      if (sortableContainers.length > 0) {
+        const sortHits = closestCenter({ ...args, droppableContainers: sortableContainers })
+        if (sortHits.length > 0) {
+          const branchHits = branchContainers.length > 0
+            ? rectIntersection({ ...args, droppableContainers: branchContainers })
+            : []
+          if (branchHits.length === 0) return sortHits
+        }
+      }
+      if (nestedContainers.length > 0) {
+        const hits = closestCenter({ ...args, droppableContainers: nestedContainers })
+        if (hits.length > 0) return hits
+      }
+      if (branchContainers.length > 0) {
+        const hits = rectIntersection({ ...args, droppableContainers: branchContainers })
+        if (hits.length > 0) return hits
+      }
+      const remaining = [...sortableContainers, ...zoneContainers]
+      return closestCenter({ ...args, droppableContainers: remaining.length > 0 ? remaining : args.droppableContainers })
+    }
+
+    // Non-nested drag: check delete-zone first (rectIntersection).
+    const deleteZone = zoneContainers.filter(c => c.id === 'delete-zone')
+    if (deleteZone.length > 0) {
+      const deleteHits = rectIntersection({ ...args, droppableContainers: deleteZone })
+      if (deleteHits.length > 0) return deleteHits
+    }
+    if (branchContainers.length > 0) {
+      const branchHits = rectIntersection({ ...args, droppableContainers: branchContainers })
+      if (branchHits.length > 0) return branchHits
+    }
+    if (sortableContainers.length > 0) {
+      const sortHits = closestCenter({ ...args, droppableContainers: sortableContainers })
+      if (sortHits.length > 0) return sortHits
+    }
+    if (zoneContainers.length > 0) {
+      return rectIntersection({ ...args, droppableContainers: zoneContainers })
+    }
+    return closestCenter({ ...args, droppableContainers: args.droppableContainers })
+  }, [])
 
   // ── Load data ──────────────────────────────────────────────────────────────
 
@@ -2608,6 +4597,14 @@ function ShortcutsEditorInner(): JSX.Element {
     window.shortcutsAPI.onDataRefresh(initFromData)
     window.shortcutsAPI.getResourceIcons().then(setResourceIcons)
   }, [initFromData])
+
+  // ── Sync theme when Settings changes it ────────────────────────────────────
+
+  useEffect(() => {
+    window.shortcutsAPI.onThemeChanged((theme) => {
+      document.documentElement.dataset.theme = theme
+    })
+  }, [])
 
   // ── Relay updates to main process on every change ──────────────────────────
 
@@ -2708,6 +4705,20 @@ function ShortcutsEditorInner(): JSX.Element {
     setNodes((prev) => prev.map((n) => n._id === id ? { ...n, action } : n))
   }, [])
 
+  // ── Palette context menu: add to start / end ──────────────────────────────
+
+  const paletteAddToStart = useCallback((type: string, shortcutId?: string) => {
+    const action = makeDefaultAction(type, shortcutId ? { shortcutId } : undefined)
+    const newNode: ActionNode = { _id: generateNodeId(), action }
+    commitNodes([newNode, ...nodes])
+  }, [nodes, commitNodes])
+
+  const paletteAddToEnd = useCallback((type: string, shortcutId?: string) => {
+    const action = makeDefaultAction(type, shortcutId ? { shortcutId } : undefined)
+    const newNode: ActionNode = { _id: generateNodeId(), action }
+    commitNodes([...nodes, newNode])
+  }, [nodes, commitNodes])
+
   // ── DnD handlers ───────────────────────────────────────────────────────────
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
@@ -2731,6 +4742,8 @@ function ShortcutsEditorInner(): JSX.Element {
     const activeId = active.id.toString()
     const isLib = activeId.startsWith('lib-')
     const isNested = activeId.startsWith('nested:')
+    // Use pointer (cursor) position instead of dragged element center for hit-testing
+    const pointerY = (event.activatorEvent as PointerEvent).clientY + event.delta.y
     const currentNodes = nodesRef.current
     const overId = over?.id?.toString() ?? ''
 
@@ -2739,10 +4752,8 @@ function ShortcutsEditorInner(): JSX.Element {
     if (isNested) {
       if (overId.startsWith('branch:')) {
         const firstColon = overId.indexOf(':', 7)
-        const nodeId = overId.slice(7, firstColon)
-        const branch = overId.slice(firstColon + 1) as 'then' | 'else' | 'loop' | 'sequence'
-        if (nodeId && (branch === 'then' || branch === 'else' || branch === 'loop' || branch === 'sequence')) {
-          setBranchDrop({ nodeId, branch })
+        if (firstColon > 7) {
+          setBranchDrop({ branchId: overId })
           setDropIndex(null)
           return
         }
@@ -2755,11 +4766,9 @@ function ShortcutsEditorInner(): JSX.Element {
           if (currentNodes.length === 0) {
             setDropIndex(0)
           } else {
-            const translated = active.rect.current.translated
-            if (translated && over) {
-              const dragMidY = translated.top + translated.height / 2
+            if (over) {
               const wsMidY = over.rect.top + over.rect.height / 2
-              setDropIndex(dragMidY < wsMidY ? 0 : currentNodes.length)
+              setDropIndex(pointerY < wsMidY ? 0 : currentNodes.length)
             } else {
               setDropIndex(currentNodes.length)
             }
@@ -2773,14 +4782,8 @@ function ShortcutsEditorInner(): JSX.Element {
       const overNodeIdx = currentNodes.findIndex((n) => n._id === overId)
       if (overNodeIdx !== -1) {
         const overRect = over!.rect
-        const translated = active.rect.current.translated
-        if (translated) {
-          const dragMidY = translated.top + translated.height / 2
-          const overMidY = overRect.top + overRect.height / 2
-          setDropIndex(dragMidY < overMidY ? overNodeIdx : overNodeIdx + 1)
-        } else {
-          setDropIndex(overNodeIdx)
-        }
+        const overMidY = overRect.top + overRect.height / 2
+        setDropIndex(pointerY < overMidY ? overNodeIdx : overNodeIdx + 1)
         return
       }
       // Over nested items in same/other branch — let SortableContext handle visuals
@@ -2788,20 +4791,19 @@ function ShortcutsEditorInner(): JSX.Element {
       return
     }
 
-    // Branch drop zone detection (format: "branch:{nodeId}:{then|else|loop|sequence}")
+    // Branch drop zone detection (format: "branch:{nodeId}:{path...}")
     // Works for BOTH library drags and existing node drags
     if (overId.startsWith('branch:')) {
       const firstColon = overId.indexOf(':', 7)
-      const nodeId = overId.slice(7, firstColon)
-      const branch = overId.slice(firstColon + 1) as 'then' | 'else' | 'loop' | 'sequence'
-      if (nodeId && (branch === 'then' || branch === 'else' || branch === 'loop' || branch === 'sequence')) {
+      if (firstColon > 7) {
+        const topNodeId = extractNodeIdFromBranchId(overId)
         // Don't allow dropping a node into its own branches
-        if (!isLib && activeId === nodeId) {
+        if (!isLib && activeId === topNodeId) {
           setBranchDrop(null)
           setDropIndex(null)
           return
         }
-        setBranchDrop({ nodeId, branch })
+        setBranchDrop({ branchId: overId })
         setDropIndex(null)
         // Remove the lib-inserted node from top-level while hovering a branch
         if (isLib && libInsertedIdRef.current) {
@@ -2834,30 +4836,51 @@ function ShortcutsEditorInner(): JSX.Element {
       const action = libActionRef.current
       if (!action) return
 
-      // Compute target index based on pointer vs over-element position
+      // Skip when hovering over the inserted ghost node itself (collision
+      // detection excludes the ghost, so this is a rare edge-case guard).
+      if (libInsertedIdRef.current && overId === libInsertedIdRef.current) return
+
+      // Compute target index based on pointer vs over-element position.
+      // For the first/last positions we use edge-based thresholds (hysteresis)
+      // when the ghost is already at that boundary.  This prevents oscillation
+      // caused by the ghost's presence shifting the target node's rect:
+      //   ghost before last node → node pushed down → midpoint lower → pointer
+      //   below → ghost moves to end → node jumps up → midpoint higher → pointer
+      //   above → ghost moves back … (infinite loop).
       const computeTargetIndex = (): number => {
         const insertedId = libInsertedIdRef.current
         const nodesWithout = insertedId ? currentNodes.filter((n) => n._id !== insertedId) : currentNodes
         if (overId === 'workspace') {
           if (nodesWithout.length === 0) return 0
-          const translated = active.rect.current.translated
-          if (translated && over) {
-            const dragMidY = translated.top + translated.height / 2
+          if (over) {
             const wsMidY = over.rect.top + over.rect.height / 2
-            return dragMidY < wsMidY ? 0 : nodesWithout.length
+            return pointerY < wsMidY ? 0 : nodesWithout.length
           }
           return nodesWithout.length
         }
         // Over a sortable top-level node
         const overIdx = nodesWithout.findIndex((n) => n._id === overId)
         if (overIdx !== -1) {
-          const translated = active.rect.current.translated
-          if (translated) {
-            const dragMidY = translated.top + translated.height / 2
-            const overMidY = over!.rect.top + over!.rect.height / 2
-            return dragMidY < overMidY ? overIdx : overIdx + 1
+          const overRect = over!.rect
+          const overMidY = overRect.top + overRect.height / 2
+
+          // Hysteresis: once the ghost is at a boundary, use the target node's
+          // edge (instead of midpoint) so the ghost "sticks" and doesn't oscillate.
+          if (insertedId) {
+            const ghostIdx = currentNodes.findIndex((n) => n._id === insertedId)
+            if (ghostIdx !== -1) {
+              // Ghost at the end — keep it there unless pointer is above the node's top
+              if (ghostIdx === currentNodes.length - 1 && overIdx === nodesWithout.length - 1) {
+                return pointerY < overRect.top ? overIdx : overIdx + 1
+              }
+              // Ghost at the start — keep it there unless pointer is below the node's bottom
+              if (ghostIdx === 0 && overIdx === 0) {
+                return pointerY < overRect.top + overRect.height ? overIdx : overIdx + 1
+              }
+            }
           }
-          return overIdx
+
+          return pointerY < overMidY ? overIdx : overIdx + 1
         }
         return nodesWithout.length
       }
@@ -2902,6 +4925,55 @@ function ShortcutsEditorInner(): JSX.Element {
     setDropIndex(null)
   }, [])
 
+  // ── handleDragMove — continuous ghost repositioning for lib drags ────────────
+  // onDragOver only fires when the collision target (`over`) changes.  When the
+  // pointer moves within the same `over` node (e.g. crossing its midpoint),
+  // onDragOver does NOT fire, leaving the ghost stuck at the wrong side.
+  // onDragMove fires on every pointer move, letting us recompute the index.
+  const handleDragMove = useCallback((event: DragMoveEvent) => {
+    const activeId = event.active.id.toString()
+    if (!activeId.startsWith('lib-')) return
+
+    const insertedId = libInsertedIdRef.current
+    if (!insertedId) return
+
+    const currentNodes = nodesRef.current
+    const currentIdx = currentNodes.findIndex((n) => n._id === insertedId)
+    if (currentIdx === -1) return // ghost removed (hovering delete-zone / branch)
+
+    const over = event.over
+    if (!over) return
+    const overId = over.id.toString()
+
+    // Only reposition when over a sortable top-level node
+    if (ZONE_IDS.has(overId) || overId.startsWith('branch:') || overId.startsWith('nested:') || overId === insertedId) return
+
+    const pointerY = (event.activatorEvent as PointerEvent).clientY + event.delta.y
+    const nodesWithout = currentNodes.filter((n) => n._id !== insertedId)
+    const overIdx = nodesWithout.findIndex((n) => n._id === overId)
+    if (overIdx === -1) return
+
+    const overRect = over.rect
+    const overMidY = overRect.top + overRect.height / 2
+
+    // Hysteresis at boundaries (same logic as computeTargetIndex in handleDragOver)
+    let targetIdx: number
+    if (currentIdx === 0 && overIdx === 0) {
+      targetIdx = pointerY < overRect.top + overRect.height ? overIdx : overIdx + 1
+    } else if (currentIdx === currentNodes.length - 1 && overIdx === nodesWithout.length - 1) {
+      targetIdx = pointerY < overRect.top ? overIdx : overIdx + 1
+    } else {
+      targetIdx = pointerY < overMidY ? overIdx : overIdx + 1
+    }
+
+    const clampedIdx = Math.min(targetIdx, nodesWithout.length)
+    const newNodes = [...nodesWithout]
+    newNodes.splice(clampedIdx, 0, currentNodes[currentIdx])
+    if (currentIdx !== newNodes.findIndex((n) => n._id === insertedId)) {
+      setNodes(newNodes)
+    }
+  }, [])
+
   const handleDragCancel = useCallback(() => {
     setActiveDragId(null)
     setDropIndex(null)
@@ -2933,34 +5005,9 @@ function ShortcutsEditorInner(): JSX.Element {
 
       const draggedAction = fromData.actions[fromData.index]
 
-      // Parse source branchId (format: "branch:{nodeId}:{then|else|loop|sequence}")
-      const srcParts = fromData.branchId.match(/^branch:(.+):(then|else|loop|sequence)$/)
-      const srcNodeId = srcParts?.[1]
-      const srcBranch = srcParts?.[2] as 'then' | 'else' | 'loop' | 'sequence' | undefined
-
-      // Helper: produce a new nodes array with the dragged item removed from its source branch
+      // Helper: remove the dragged item from its source branch (works at any depth)
       const removeDraggedFromNodes = (nodesList: ActionNode[]): ActionNode[] => {
-        if (!srcNodeId || !srcBranch) return nodesList
-        return nodesList.map((n) => {
-          if (n._id !== srcNodeId) return n
-          const a = n.action
-          if (a.type === 'if-else' && (srcBranch === 'then' || srcBranch === 'else')) {
-            const ifElse = a as IfElseAction
-            return { ...n, action: srcBranch === 'then'
-              ? { ...ifElse, thenActions: ifElse.thenActions.filter((_, i) => i !== fromData.index) }
-              : { ...ifElse, elseActions: ifElse.elseActions.filter((_, i) => i !== fromData.index) }
-            }
-          }
-          if (a.type === 'loop' && srcBranch === 'loop') {
-            const loopAct = a as LoopAction
-            return { ...n, action: { ...loopAct, body: loopAct.body.filter((_, i) => i !== fromData.index) } }
-          }
-          if (a.type === 'sequence' && srcBranch === 'sequence') {
-            const seqAct = a as SequenceAction
-            return { ...n, action: { ...seqAct, body: seqAct.body.filter((_, i) => i !== fromData.index) } }
-          }
-          return n
-        })
+        return modifyBranch(nodesList, fromData.branchId, (acts) => acts.filter((_, i) => i !== fromData.index)) ?? nodesList
       }
 
       // Drop on another nested item — same-branch reorder handled via callbacks
@@ -2971,40 +5018,13 @@ function ShortcutsEditorInner(): JSX.Element {
           fromData.onReorder(arrayMove([...fromData.actions], fromData.index, toData.index))
           return
         }
-        // Cross-branch reorder via nested items — use commitNodes for atomicity
+        // Cross-branch reorder via nested items — use modifyBranch for atomicity
         if (fromData && toData && fromData.branchId !== toData.branchId) {
           let updated = removeDraggedFromNodes(nodesRef.current)
-          // Now add to target branch
-          const tgtParts = toData.branchId.match(/^branch:(.+):(then|else|loop|sequence)$/)
-          const tgtNodeId = tgtParts?.[1]
-          const tgtBranch = tgtParts?.[2] as 'then' | 'else' | 'loop' | 'sequence' | undefined
-          if (tgtNodeId && tgtBranch) {
-            updated = updated.map((n) => {
-              if (n._id !== tgtNodeId) return n
-              const a = n.action
-              if (a.type === 'if-else' && (tgtBranch === 'then' || tgtBranch === 'else')) {
-                const ifElse = a as IfElseAction
-                const arr = tgtBranch === 'then' ? [...ifElse.thenActions] : [...ifElse.elseActions]
-                arr.splice(toData.index, 0, draggedAction)
-                return { ...n, action: tgtBranch === 'then'
-                  ? { ...ifElse, thenActions: arr }
-                  : { ...ifElse, elseActions: arr }
-                }
-              }
-              if (a.type === 'loop' && tgtBranch === 'loop') {
-                const loopAct = a as LoopAction
-                const arr = [...loopAct.body]; arr.splice(toData.index, 0, draggedAction)
-                return { ...n, action: { ...loopAct, body: arr } }
-              }
-              if (a.type === 'sequence' && tgtBranch === 'sequence') {
-                const seqAct = a as SequenceAction
-                const arr = [...seqAct.body]; arr.splice(toData.index, 0, draggedAction)
-                return { ...n, action: { ...seqAct, body: arr } }
-              }
-              return n
-            })
-          }
-          commitNodes(updated)
+          const added = modifyBranch(updated, toData.branchId, (acts) => {
+            const arr = [...acts]; arr.splice(toData.index, 0, draggedAction); return arr
+          })
+          if (added) commitNodes(added)
           return
         }
       }
@@ -3019,26 +5039,9 @@ function ShortcutsEditorInner(): JSX.Element {
 
       // Drop on a branch zone — insert into that branch
       if (branchTarget) {
-        const { nodeId, branch } = branchTarget
         let updated = removeDraggedFromNodes(nodesRef.current)
-        const targetNodeIdx = updated.findIndex((n) => n._id === nodeId)
-        if (targetNodeIdx !== -1) {
-          const targetAction = updated[targetNodeIdx].action
-          if (targetAction.type === 'if-else' && (branch === 'then' || branch === 'else')) {
-            const ifElse = targetAction as IfElseAction
-            const updatedAction: IfElseAction = branch === 'then'
-              ? { ...ifElse, thenActions: [...ifElse.thenActions, draggedAction] }
-              : { ...ifElse, elseActions: [...ifElse.elseActions, draggedAction] }
-            updated = updated.map((n, i) => i === targetNodeIdx ? { ...n, action: updatedAction } : n)
-          } else if (targetAction.type === 'loop' && branch === 'loop') {
-            const loopAct = targetAction as LoopAction
-            updated = updated.map((n, i) => i === targetNodeIdx ? { ...n, action: { ...loopAct, body: [...loopAct.body, draggedAction] } } : n)
-          } else if (targetAction.type === 'sequence' && branch === 'sequence') {
-            const seqAct = targetAction as SequenceAction
-            updated = updated.map((n, i) => i === targetNodeIdx ? { ...n, action: { ...seqAct, body: [...seqAct.body, draggedAction] } } : n)
-          }
-          commitNodes(updated)
-        }
+        const added = modifyBranch(updated, branchTarget.branchId, (acts) => [...acts, draggedAction])
+        if (added) commitNodes(added)
         return
       }
 
@@ -3075,30 +5078,13 @@ function ShortcutsEditorInner(): JSX.Element {
         return
       }
 
-      // Branch drop — insert action into branch
+      // Branch drop — insert action into branch (works at any depth)
       if (branchTarget) {
-        const { nodeId, branch } = branchTarget
-        const action = insertedId ? currentNodes.find((n) => n._id === insertedId)?.action : libAction
-        // Base: preNodes (no inserted node)
+        const action = (insertedId ? currentNodes.find((n) => n._id === insertedId)?.action : null) ?? libAction
         const baseNodes = preNodes
         if (!action) { setNodes(preNodes); return }
-        const nodeIdx = baseNodes.findIndex((n) => n._id === nodeId)
-        if (nodeIdx !== -1) {
-          const nodeAction = baseNodes[nodeIdx].action
-          let updatedNodes = baseNodes
-          if (nodeAction.type === 'if-else' && (branch === 'then' || branch === 'else')) {
-            const ifElse = nodeAction as IfElseAction
-            const updatedAction: IfElseAction = branch === 'then'
-              ? { ...ifElse, thenActions: [...ifElse.thenActions, action] }
-              : { ...ifElse, elseActions: [...ifElse.elseActions, action] }
-            updatedNodes = baseNodes.map((n, i) => i === nodeIdx ? { ...n, action: updatedAction } : n)
-          } else if (nodeAction.type === 'loop' && branch === 'loop') {
-            const loopAct = nodeAction as LoopAction
-            updatedNodes = baseNodes.map((n, i) => i === nodeIdx ? { ...n, action: { ...loopAct, body: [...loopAct.body, action] } } : n)
-          } else if (nodeAction.type === 'sequence' && branch === 'sequence') {
-            const seqAct = nodeAction as SequenceAction
-            updatedNodes = baseNodes.map((n, i) => i === nodeIdx ? { ...n, action: { ...seqAct, body: [...seqAct.body, action] } } : n)
-          }
+        const updatedNodes = modifyBranch(baseNodes, branchTarget.branchId, (acts) => [...acts, action])
+        if (updatedNodes) {
           setPast(p => [...p, preNodes])
           setFuture([])
           setNodes(updatedNodes)
@@ -3126,34 +5112,14 @@ function ShortcutsEditorInner(): JSX.Element {
     setDropIndex(null)
 
     if (branchTarget && over) {
-      const { nodeId, branch } = branchTarget
       const currentNodes = nodesRef.current
       const dragNodeIdx = currentNodes.findIndex((n) => n._id === id)
-      const targetNodeIdx = currentNodes.findIndex((n) => n._id === nodeId)
-      if (dragNodeIdx !== -1 && targetNodeIdx !== -1 && dragNodeIdx !== targetNodeIdx) {
+      if (dragNodeIdx !== -1) {
         const draggedAction = currentNodes[dragNodeIdx].action
-        const targetAction = currentNodes[targetNodeIdx].action
         // Remove from top-level, add to the branch
         const withoutDragged = currentNodes.filter((_, i) => i !== dragNodeIdx)
-        // Recalculate target index after removal
-        const newTargetIdx = withoutDragged.findIndex((n) => n._id === nodeId)
-        if (newTargetIdx !== -1) {
-          if (targetAction.type === 'if-else' && (branch === 'then' || branch === 'else')) {
-            const ifElse = targetAction as IfElseAction
-            const updatedAction: IfElseAction = branch === 'then'
-              ? { ...ifElse, thenActions: [...ifElse.thenActions, draggedAction] }
-              : { ...ifElse, elseActions: [...ifElse.elseActions, draggedAction] }
-            commitNodes(withoutDragged.map((n, i) => i === newTargetIdx ? { ...n, action: updatedAction } : n))
-          } else if (targetAction.type === 'loop' && branch === 'loop') {
-            const loopAct = targetAction as LoopAction
-            const updatedAction: LoopAction = { ...loopAct, body: [...loopAct.body, draggedAction] }
-            commitNodes(withoutDragged.map((n, i) => i === newTargetIdx ? { ...n, action: updatedAction } : n))
-          } else if (targetAction.type === 'sequence' && branch === 'sequence') {
-            const seqAct = targetAction as SequenceAction
-            const updatedAction: SequenceAction = { ...seqAct, body: [...seqAct.body, draggedAction] }
-            commitNodes(withoutDragged.map((n, i) => i === newTargetIdx ? { ...n, action: updatedAction } : n))
-          }
-        }
+        const updated = modifyBranch(withoutDragged, branchTarget.branchId, (acts) => [...acts, draggedAction])
+        if (updated) commitNodes(updated)
       }
       return
     }
@@ -3267,21 +5233,110 @@ function ShortcutsEditorInner(): JSX.Element {
   const actionPaletteItems = ACTION_TYPES.filter((key) =>
     !search || key.includes(search.toLowerCase()) ||
     NODE_STYLE[key]?.label.toLowerCase().includes(search.toLowerCase())
-  )
+  ).sort((a, b) => (NODE_STYLE[a]?.label ?? '').localeCompare(NODE_STYLE[b]?.label ?? '', undefined, { sensitivity: 'base' }))
 
   const scriptPaletteItems = SCRIPT_TYPES.filter((key) =>
     !search || key.includes(search.toLowerCase()) ||
     NODE_STYLE[key]?.label.toLowerCase().includes(search.toLowerCase())
+  ).sort((a, b) => (NODE_STYLE[a]?.label ?? '').localeCompare(NODE_STYLE[b]?.label ?? '', undefined, { sensitivity: 'base' }))
+
+  // Collect all values (variables + return values) from current nodes
+  const valueEntries = useMemo((): { variables: ValueEntry[]; returnValues: ValueEntry[] } => {
+    const variables: ValueEntry[] = []
+    const returnValues: ValueEntry[] = []
+    const seenVars = new Set<string>()
+
+    for (let i = 0; i < nodes.length; i++) {
+      const a = nodes[i].action
+      // Collect user-defined variables
+      if (a.type === 'set-var') {
+        const sv = a as SetVarAction
+        const svName = sv.name.replace(/^\$/, '')
+        if (svName && !seenVars.has(svName)) {
+          seenVars.add(svName)
+          variables.push({ ref: `$${svName}`, label: svName, sourceType: 'set-var', definedAtIndex: i, color: getSourceColor('set-var'), nodeId: nodes[i]._id })
+        }
+      } else if (a.type === 'list') {
+        const la = a as ListAction
+        if (la.name && !seenVars.has(la.name)) {
+          seenVars.add(la.name)
+          variables.push({ ref: `$${la.name}`, label: la.name, sourceType: 'list', definedAtIndex: i, color: getSourceColor('list'), nodeId: nodes[i]._id })
+        }
+        if (la.operation === 'get' && la.resultVar && !seenVars.has(la.resultVar)) {
+          seenVars.add(la.resultVar)
+          variables.push({ ref: `$${la.resultVar}`, label: la.resultVar, sourceType: 'list', definedAtIndex: i, color: getSourceColor('list'), nodeId: nodes[i]._id })
+        }
+      } else if (a.type === 'dict') {
+        const da = a as DictAction
+        if (da.name && !seenVars.has(da.name)) {
+          seenVars.add(da.name)
+          variables.push({ ref: `$${da.name}`, label: da.name, sourceType: 'dict', definedAtIndex: i, color: getSourceColor('dict'), nodeId: nodes[i]._id })
+        }
+        if (da.operation === 'get' && da.resultVar && !seenVars.has(da.resultVar)) {
+          seenVars.add(da.resultVar)
+          variables.push({ ref: `$${da.resultVar}`, label: da.resultVar, sourceType: 'dict', definedAtIndex: i, color: getSourceColor('dict'), nodeId: nodes[i]._id })
+        }
+      } else if (a.type === 'calculate') {
+        const ca = a as CalculateAction
+        if (ca.resultVar && !seenVars.has(ca.resultVar)) {
+          seenVars.add(ca.resultVar)
+          variables.push({ ref: `$${ca.resultVar}`, label: ca.resultVar, sourceType: 'calculate', definedAtIndex: i, color: getSourceColor('calculate'), nodeId: nodes[i]._id })
+        }
+      } else if (a.type === 'loop') {
+        // Loop iteration variables (for's iterVar, foreach's itemVar) are scoped
+        // to the loop body — mark them as seen so they don't appear as return values,
+        // but don't add them to the palette since they're not usable outside the loop.
+        const la = a as LoopAction
+        const mode = la.mode ?? 'repeat'
+        if (mode === 'for' && la.iterVar) {
+          seenVars.add(la.iterVar)
+        }
+        if (mode === 'foreach' && la.itemVar) {
+          seenVars.add(la.itemVar)
+        }
+      } else if (a.type === 'run-shortcut') {
+        const rs = a as RunShortcutAction
+        if (rs.outputVar && !seenVars.has(rs.outputVar)) {
+          seenVars.add(rs.outputVar)
+          variables.push({ ref: `$${rs.outputVar}`, label: rs.outputVar, sourceType: 'run-shortcut', definedAtIndex: i, color: getSourceColor('run-shortcut'), nodeId: nodes[i]._id })
+        }
+      }
+
+      // Collect implicit return values — skip variable/container nodes
+      // (set-var, list, dict) whose values are already in the variables section,
+      // and loop iteration vars which are scoped to the loop body.
+      if (a.type !== 'set-var' && a.type !== 'list' && a.type !== 'dict' && a.type !== 'loop') {
+        const rvs = getNodeReturnValues(a, i, t)
+        if (rvs) {
+          for (const rv of rvs) {
+            // Skip if already captured as a user variable
+            if (seenVars.has(rv.ref)) continue
+            const cfg = NODE_STYLE[a.type]
+            returnValues.push({
+              ref: rv.ref,
+              label: rv.label,
+              sourceType: rv.sourceType,
+              definedAtIndex: i,
+              color: cfg?.color ?? '#888',
+              nodeId: nodes[i]._id,
+            })
+          }
+        }
+      }
+    }
+    return { variables, returnValues }
+  }, [nodes, t])
+
+  // Filter value entries by search
+  const filteredVariables = valueEntries.variables.filter(v =>
+    !search || v.label.toLowerCase().includes(search.toLowerCase()) || v.ref.toLowerCase().includes(search.toLowerCase())
+  )
+  const filteredReturnValues = valueEntries.returnValues.filter(v =>
+    !search || v.label.toLowerCase().includes(search.toLowerCase()) || v.ref.toLowerCase().includes(search.toLowerCase())
   )
 
   // Filter out the current shortcut being edited to prevent self-calls
   const currentEntryId = data?.libraryEntryId
-  const shortcutPaletteItems = library.filter((entry) => {
-    if (entry.id === currentEntryId) return false  // prevent self-reference
-    const matchesSearch = !search || entry.name.toLowerCase().includes(search.toLowerCase())
-    const matchesGroup = groupFilter === 'all' || entry.groupId === groupFilter
-    return matchesSearch && matchesGroup
-  })
 
   // ── Loading state ──────────────────────────────────────────────────────────
 
@@ -3296,12 +5351,15 @@ function ShortcutsEditorInner(): JSX.Element {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
+    <ValueDragContext.Provider value={valueDragCtx}>
+    <ReturnValuePickerContext.Provider value={rvPickerCtx}>
     <DndContext
       sensors={sensors}
-      collisionDetection={branchPriorityCollision}
+      collisionDetection={collisionDetection}
       measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
       onDragStart={handleDragStart}
       onDragOver={handleDragOver}
+      onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
       onDragCancel={handleDragCancel}
     >
@@ -3360,7 +5418,7 @@ function ShortcutsEditorInner(): JSX.Element {
                   if (e.key === 'Escape') { setIsEditingLabel(false); setLabelDraft(slotLabel) }
                 }}
                 style={{
-                  background: 'var(--c-input-bg)', border: '1px solid var(--c-accent)',
+                  background: 'var(--c-surface)', border: '1px solid var(--c-accent)',
                   borderRadius: 5, color: 'var(--c-text)', fontSize: 13, fontWeight: 600,
                   fontFamily: 'inherit', outline: 'none', padding: '2px 6px',
                   WebkitAppRegion: 'no-drag', minWidth: 0, width: 200, height: 26,
@@ -3424,8 +5482,30 @@ function ShortcutsEditorInner(): JSX.Element {
         <div style={{ display: 'flex', flex: 1, minHeight: 0 }}>
 
           {/* Workspace (left) */}
-          <div style={{ flex: 1, minWidth: 300, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <WorkspaceDropZone style={{ flex: 1, overflowY: 'auto', padding: '16px 56px' }} isLibDrag={isLibDrag} hasNodes={nodes.length > 0}>
+          <div data-workspace="" style={{ flex: 1, minWidth: 300, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--c-elevated)' }}>
+            {/* Return value picker banner */}
+            {rvPickerState.active && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '6px 16px',
+                background: 'rgba(59,130,246,0.12)',
+                borderBottom: '1px solid rgba(59,130,246,0.3)',
+                flexShrink: 0,
+              }}>
+                <UIIcon name="output" size={14} />
+                <span style={{ fontSize: 12, color: 'var(--c-text)', flex: 1 }}>{t('script.returnValuePickerHint')}</span>
+                <button
+                  onClick={() => rvPickerCtx.cancelPick()}
+                  style={{
+                    background: 'none', border: '1px solid var(--c-border)', borderRadius: 4,
+                    color: 'var(--c-text-dim)', cursor: 'pointer', padding: '2px 8px', fontSize: 11,
+                  }}
+                >
+                  Esc
+                </button>
+              </div>
+            )}
+            <WorkspaceDropZone style={{ flex: 1, overflowY: 'auto', padding: '16px 56px 50vh 56px' }} isLibDrag={isLibDrag} hasNodes={nodes.length > 0}>
               {nodes.length === 0 ? (
                 <div style={{
                   textAlign: 'center', color: 'var(--c-text-dim)', fontSize: 13,
@@ -3444,6 +5524,38 @@ function ShortcutsEditorInner(): JSX.Element {
                     const elements: JSX.Element[] = []
                     for (let i = 0; i < nodes.length; i++) {
                       const node = nodes[i]
+
+                      // ── Pipeline connector line between previous node and current ──
+                      if (i > 0) {
+                        const prevAction = nodes[i - 1].action
+                        const prevHasOutput = nodeHasPipelineOutput(prevAction)
+                        const prevColor = (() => {
+                          const prevCfg = NODE_STYLE[prevAction.type] ?? NODE_STYLE.shell
+                          if (prevAction.type === 'run-shortcut') {
+                            const entry = library.find(e => e.id === (prevAction as RunShortcutAction).shortcutId)
+                            return entry?.bgColor ?? prevCfg.color
+                          }
+                          return prevCfg.color
+                        })()
+                        elements.push(
+                          <div key={`pipe-${node._id}`} style={{
+                            display: 'flex',
+                            justifyContent: 'center',
+                            height: prevHasOutput ? 14 : 6,
+                            pointerEvents: 'none',
+                          }}>
+                            {prevHasOutput && (
+                              <div style={{
+                                width: 2,
+                                height: '100%',
+                                borderRadius: 1,
+                                background: `${prevColor}55`,
+                              }} />
+                            )}
+                          </div>
+                        )
+                      }
+
                       if (showIndicator && dropIndex === i) {
                         elements.push(
                           <div key="drop-indicator" style={{
@@ -3456,13 +5568,18 @@ function ShortcutsEditorInner(): JSX.Element {
                         <SortableNode
                           key={node._id}
                           node={node}
+                          nodeIndex={i}
                           nodeStyle={NODE_STYLE}
                           onChange={(action) => updateNode(node._id, action)}
                           onDelete={() => deleteNode(node._id)}
                           errorMsg={i === errorNodeIndex ? (errorMessage ?? t('shortcuts.executionError')) : undefined}
                           library={library}
+                          groups={groups}
+                          resourceIcons={resourceIcons}
                           currentEntryId={currentEntryId}
                           availableVars={collectAvailableVars(nodes, i)}
+                          availableVarInfos={collectAvailableVarInfos(nodes, i)}
+                          isGhost={isLibDrag && node._id === libInsertedIdRef.current}
                         />
                       )
                     }
@@ -3497,7 +5614,7 @@ function ShortcutsEditorInner(): JSX.Element {
           {/* Palette (right) — also serves as delete drop zone when dragging workspace nodes */}
           <DeleteDropZone style={{ width: libWidth, flexShrink: 0, display: 'flex', flexDirection: 'column', background: 'var(--c-surface)' }} active={activeDragId !== null} mode={isLibDrag ? 'cancel' : 'delete'}>
             {/* Icon-only tab bar (centered) */}
-            <PaletteTabBar active={paletteTab} onChange={(tab) => { setPaletteTab(tab); setSearch(''); setGroupFilter('all') }} />
+            <PaletteTabBar active={paletteTab} onChange={(tab) => { setPaletteTab(tab); setSearch('') }} />
 
             {/* Search */}
             <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--c-border-sub)', flexShrink: 0 }}>
@@ -3507,7 +5624,7 @@ function ShortcutsEditorInner(): JSX.Element {
                 placeholder={t('modal.searchActions')}
                 style={{
                   width: '100%',
-                  background: 'var(--c-input-bg)',
+                  background: 'var(--c-surface)',
                   border: '1px solid var(--c-border)',
                   borderRadius: 6, color: 'var(--c-text)',
                   padding: '5px 8px', fontSize: 12,
@@ -3517,72 +5634,47 @@ function ShortcutsEditorInner(): JSX.Element {
               />
             </div>
 
-            {/* Group filter — only shown in 'shortcuts' or 'all' tabs when groups exist */}
-            {(paletteTab === 'shortcuts' || paletteTab === 'all') && groups.length > 0 && (
-              <div style={{ padding: '0 8px 6px', flexShrink: 0 }}>
-                <select
-                  value={groupFilter}
-                  onChange={(e) => setGroupFilter(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '4px 6px',
-                    borderRadius: 5,
-                    border: '1px solid var(--c-border)',
-                    background: 'var(--c-input-bg)',
-                    color: 'var(--c-text)',
-                    fontSize: 11,
-                    fontFamily: 'inherit',
-                    outline: 'none',
-                    cursor: 'pointer',
-                    boxSizing: 'border-box',
-                  }}
-                >
-                  <option value="all">{t('palette.allGroups')}</option>
-                  {groups.map((g) => (
-                    <option key={g.id} value={g.id}>{g.name}</option>
-                  ))}
-                </select>
-              </div>
-            )}
-
             {/* Tab content */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '6px 8px' }}>
               {paletteTab === 'all' && (
                 <>
-                  {/* Actions section */}
+                  {/* ACTIONS major category */}
                   {actionPaletteItems.length > 0 && (
                     <>
-                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--c-text-dim)', padding: '2px 4px 4px', textTransform: 'uppercase' }}>
-                        {t('palette.actions')}
-                      </div>
-                      {actionPaletteItems.map((type) => (
-                        <LibraryItem key={type} type={type} cfg={NODE_STYLE[type]} />
-                      ))}
+                      <MajorCategoryHeader label={t('palette.actions')} />
+                      {ACTION_SUBCATEGORIES.map((sub, si) => {
+                        const items = sub.types.filter((t) => actionPaletteItems.includes(t))
+                        if (items.length === 0) return null
+                        return (
+                          <React.Fragment key={sub.labelKey}>
+                            <SubCategoryHeader label={t(sub.labelKey as keyof Translations)} first={si === 0} />
+                            {items.map((type) => (
+                              <LibraryItem key={type} type={type} cfg={NODE_STYLE[type]} onAddToStart={(t) => paletteAddToStart(t)} onAddToEnd={(t) => paletteAddToEnd(t)} />
+                            ))}
+                          </React.Fragment>
+                        )
+                      })}
                     </>
                   )}
-                  {/* Scripts section */}
+                  {/* SCRIPTS major category */}
                   {scriptPaletteItems.length > 0 && (
                     <>
-                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--c-text-dim)', padding: '6px 4px 4px', textTransform: 'uppercase' }}>
-                        {t('palette.scripts')}
-                      </div>
-                      {scriptPaletteItems.map((type) => (
-                        <LibraryItem key={type} type={type} cfg={NODE_STYLE[type]} />
-                      ))}
+                      <MajorCategoryHeader label={t('palette.scripts')} />
+                      {SCRIPT_SUBCATEGORIES.map((sub, si) => {
+                        const items = sub.types.filter((t) => scriptPaletteItems.includes(t))
+                        if (items.length === 0) return null
+                        return (
+                          <React.Fragment key={sub.labelKey}>
+                            <SubCategoryHeader label={t(sub.labelKey as keyof Translations)} first={si === 0} />
+                            {items.map((type) => (
+                              <LibraryItem key={type} type={type} cfg={NODE_STYLE[type]} onAddToStart={(t) => paletteAddToStart(t)} onAddToEnd={(t) => paletteAddToEnd(t)} />
+                            ))}
+                          </React.Fragment>
+                        )
+                      })}
                     </>
                   )}
-                  {/* Shortcuts section */}
-                  {shortcutPaletteItems.length > 0 && (
-                    <>
-                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--c-text-dim)', padding: '6px 4px 4px', textTransform: 'uppercase' }}>
-                        {t('palette.shortcuts')}
-                      </div>
-                      {shortcutPaletteItems.map((entry) => (
-                        <ShortcutLibraryItem key={entry.id} entry={entry} />
-                      ))}
-                    </>
-                  )}
-                  {actionPaletteItems.length === 0 && scriptPaletteItems.length === 0 && shortcutPaletteItems.length === 0 && (
+                  {actionPaletteItems.length === 0 && scriptPaletteItems.length === 0 && (
                     <div style={{ fontSize: 12, color: 'var(--c-text-dim)', padding: '20px 8px', textAlign: 'center' }}>
                       No matching items
                     </div>
@@ -3592,9 +5684,18 @@ function ShortcutsEditorInner(): JSX.Element {
 
               {paletteTab === 'actions' && (
                 <>
-                  {actionPaletteItems.map((type) => (
-                    <LibraryItem key={type} type={type} cfg={NODE_STYLE[type]} />
-                  ))}
+                  {ACTION_SUBCATEGORIES.map((sub, si) => {
+                    const items = sub.types.filter((t) => actionPaletteItems.includes(t))
+                    if (items.length === 0) return null
+                    return (
+                      <React.Fragment key={sub.labelKey}>
+                        <SubCategoryHeader label={t(sub.labelKey as keyof Translations)} first={si === 0} />
+                        {items.map((type) => (
+                          <LibraryItem key={type} type={type} cfg={NODE_STYLE[type]} onAddToStart={(t) => paletteAddToStart(t)} onAddToEnd={(t) => paletteAddToEnd(t)} />
+                        ))}
+                      </React.Fragment>
+                    )
+                  })}
                   {actionPaletteItems.length === 0 && (
                     <div style={{ fontSize: 12, color: 'var(--c-text-dim)', padding: '20px 8px', textAlign: 'center' }}>
                       No matching actions
@@ -3605,9 +5706,18 @@ function ShortcutsEditorInner(): JSX.Element {
 
               {paletteTab === 'scripts' && (
                 <>
-                  {scriptPaletteItems.map((type) => (
-                    <LibraryItem key={type} type={type} cfg={NODE_STYLE[type]} />
-                  ))}
+                  {SCRIPT_SUBCATEGORIES.map((sub, si) => {
+                    const items = sub.types.filter((t) => scriptPaletteItems.includes(t))
+                    if (items.length === 0) return null
+                    return (
+                      <React.Fragment key={sub.labelKey}>
+                        <SubCategoryHeader label={t(sub.labelKey as keyof Translations)} first={si === 0} />
+                        {items.map((type) => (
+                          <LibraryItem key={type} type={type} cfg={NODE_STYLE[type]} onAddToStart={(t) => paletteAddToStart(t)} onAddToEnd={(t) => paletteAddToEnd(t)} />
+                        ))}
+                      </React.Fragment>
+                    )
+                  })}
                   {scriptPaletteItems.length === 0 && (
                     <div style={{ fontSize: 12, color: 'var(--c-text-dim)', padding: '20px 8px', textAlign: 'center' }}>
                       No matching scripts
@@ -3616,23 +5726,38 @@ function ShortcutsEditorInner(): JSX.Element {
                 </>
               )}
 
-              {paletteTab === 'shortcuts' && (
+              {paletteTab === 'values' && (
                 <>
-                  {library.length === 0 ? (
+                  {/* Variables section */}
+                  {filteredVariables.length > 0 && (
+                    <>
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--c-text-dim)', padding: '2px 4px 4px', textTransform: 'uppercase' }}>
+                        {t('palette.variables')}
+                      </div>
+                      {filteredVariables.map((entry) => (
+                        <ValuePaletteItem key={entry.ref} entry={entry} />
+                      ))}
+                    </>
+                  )}
+                  {/* Return values section */}
+                  {filteredReturnValues.length > 0 && (
+                    <>
+                      <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', color: 'var(--c-text-dim)', padding: '6px 4px 4px', textTransform: 'uppercase' }}>
+                        {t('palette.returnValues')}
+                      </div>
+                      {filteredReturnValues.map((entry) => (
+                        <ValuePaletteItem key={`${entry.ref}-${entry.definedAtIndex}`} entry={entry} />
+                      ))}
+                    </>
+                  )}
+                  {filteredVariables.length === 0 && filteredReturnValues.length === 0 && (
                     <div style={{ fontSize: 12, color: 'var(--c-text-dim)', padding: '20px 8px', textAlign: 'center' }}>
-                      {t('script.noShortcuts')}
+                      {t('palette.noValues')}
                     </div>
-                  ) : shortcutPaletteItems.length === 0 ? (
-                    <div style={{ fontSize: 12, color: 'var(--c-text-dim)', padding: '20px 8px', textAlign: 'center' }}>
-                      No matching shortcuts
-                    </div>
-                  ) : (
-                    shortcutPaletteItems.map((entry) => (
-                      <ShortcutLibraryItem key={entry.id} entry={entry} />
-                    ))
                   )}
                 </>
               )}
+
             </div>
           </DeleteDropZone>
         </div>
@@ -3675,19 +5800,44 @@ function ShortcutsEditorInner(): JSX.Element {
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8,
               padding: '8px 12px', borderRadius: 8,
-              background: 'var(--c-elevated)',
+              background: 'var(--c-node-bg)',
               border: `1px solid ${overlayColor}55`,
               borderLeft: `3px solid ${overlayColor}`,
-              boxShadow: '0 8px 28px rgba(0,0,0,0.55)',
-              pointerEvents: 'none', opacity: 0.97,
+              boxShadow: '0 8px 28px rgba(0,0,0,0.35)',
+              pointerEvents: 'none', opacity: 0.55,
             }}>
               <span style={{ flexShrink: 0, color: overlayColor }}>{renderNodeIcon(overlayIcon, 16)}</span>
-              <span style={{ fontSize: 12, fontWeight: 700, color: overlayColor, whiteSpace: 'nowrap' }}>{cfg.label}</span>
+              <span style={{ fontSize: 12, color: overlayColor, whiteSpace: 'nowrap' }}>{cfg.label}</span>
             </div>
           )
         })()}
       </DragOverlay>
     </DndContext>
+    </ReturnValuePickerContext.Provider>
+
+    {/* Forbidden drop tooltip */}
+    {forbiddenTooltip.visible && (
+      <div style={{
+        position: 'fixed',
+        top: forbiddenTooltip.y - 36,
+        left: forbiddenTooltip.x + 12,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 5,
+        padding: '5px 10px',
+        background: 'var(--c-elevated, #1e1e2e)',
+        border: '1px solid rgba(239,68,68,0.4)',
+        borderRadius: 7,
+        boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
+        zIndex: 99999,
+        pointerEvents: 'none',
+        whiteSpace: 'nowrap',
+      }}>
+        <span style={{ color: '#ef4444', display: 'flex', flexShrink: 0 }}><UIIcon name="stop" size={13} /></span>
+        <span style={{ fontSize: 11, color: '#ef4444', fontWeight: 500 }}>{t('palette.valueNotDefined')}</span>
+      </div>
+    )}
+    </ValueDragContext.Provider>
   )
 }
 

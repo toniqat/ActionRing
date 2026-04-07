@@ -56,10 +56,14 @@
       {
         "from": "resources/icons",
         "to": "icons"
+      },
+      {
+        "from": "resources/logo",
+        "to": "logo"
       }
     ],
     "win": {
-      "icon": "resources/icons/icon.ico",
+      "icon": "resources/logo/icon.ico",
       "target": [
         {
           "target": "portable",
@@ -70,7 +74,7 @@
       ]
     },
     "mac": {
-      "icon": "resources/icons/icon.svg",
+      "icon": "resources/logo/icon.svg",
       "target": [
         {
           "target": "dmg",

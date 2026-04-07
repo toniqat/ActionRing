@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { UpdateStatus } from '@shared/ipc.types'
 
 const REPO_URL = 'https://github.com/toniqat/ActionRing'
@@ -38,114 +38,18 @@ function GitHubIcon({ size = 16 }: { size?: number }): JSX.Element {
   )
 }
 
-// ── Update section ────────────────────────────────────────────────────────────
-function UpdateSection({ status, onDownload, onInstall }: {
-  status: UpdateStatus
-  onDownload: () => void
-  onInstall: () => void
-}): JSX.Element {
-  if (status.state === 'idle') return <></>
-
-  if (status.state === 'checking') {
-    return (
-      <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{
-          display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
-          border: '2px solid var(--c-text-dim)', borderTopColor: 'transparent',
-          animation: 'ar-spin 0.8s linear infinite',
-        }} />
-        Checking for updates…
-      </p>
-    )
-  }
-
-  if (status.state === 'up-to-date') {
-    return (
-      <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
-        You are on the latest version.
-      </p>
-    )
-  }
-
-  if (status.state === 'available') {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-        <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
-          New version available:{' '}
-          <strong style={{ color: 'var(--c-text)' }}>{status.latestVersion}</strong>
-        </p>
-        <button onClick={onDownload} style={accentBtnStyle}>
-          Download Update
-        </button>
-      </div>
-    )
-  }
-
-  if (status.state === 'downloading') {
-    const pct = status.downloadProgress ?? 0
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, width: '100%', maxWidth: 220 }}>
-        <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
-          Downloading… {pct}%
-        </p>
-        <div style={{ width: '100%', height: 4, borderRadius: 2, background: 'rgba(128,128,128,0.2)' }}>
-          <div style={{ width: `${pct}%`, height: '100%', borderRadius: 2, background: '#f64161', transition: 'width 0.2s ease' }} />
-        </div>
-      </div>
-    )
-  }
-
-  if (status.state === 'ready') {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-        <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
-          Update downloaded — ready to install.
-        </p>
-        <button onClick={onInstall} style={accentBtnStyle}>
-          Install &amp; Restart
-        </button>
-      </div>
-    )
-  }
-
-  if (status.state === 'error') {
-    return (
-      <p style={{ fontSize: 12, color: '#f64161', margin: 0, textAlign: 'center', maxWidth: 260 }}>
-        Update check failed. Check your connection.
-      </p>
-    )
-  }
-
-  return <></>
-}
-
-const accentBtnStyle: React.CSSProperties = {
-  padding: '6px 18px',
-  fontSize: 12,
-  fontWeight: 600,
-  color: '#fff',
-  background: '#f64161',
-  border: 'none',
-  borderRadius: 6,
-  cursor: 'pointer',
-  letterSpacing: 0.4,
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 export function AboutTab(): JSX.Element {
-  const [status, setStatus] = useState<UpdateStatus>({ state: 'idle' })
   const [currentVersion, setCurrentVersion] = useState<string>('')
-  const listenerRegistered = useRef(false)
+  const [status, setStatus] = useState<UpdateStatus>({ state: 'idle' })
 
   useEffect(() => {
-    if (!listenerRegistered.current) {
-      listenerRegistered.current = true
-      window.settingsAPI.onUpdateStatus((s) => {
-        setStatus(s)
-        if (s.currentVersion) setCurrentVersion(s.currentVersion)
-      })
-    }
+    window.settingsAPI.checkForUpdates().then((s) => {
+      if (s.currentVersion) setCurrentVersion(s.currentVersion)
+    }).catch(() => {})
+  }, [])
 
+  const handleCheckLatest = (): void => {
     setStatus({ state: 'checking' })
     window.settingsAPI.checkForUpdates().then((s) => {
       setStatus(s)
@@ -153,19 +57,14 @@ export function AboutTab(): JSX.Element {
     }).catch(() => {
       setStatus({ state: 'error', error: 'Network error' })
     })
-  }, [])
-
-  const handleDownload = (): void => {
-    setStatus((s) => ({ ...s, state: 'downloading', downloadProgress: 0 }))
-    window.settingsAPI.downloadUpdate()
-  }
-
-  const handleInstall = (): void => {
-    window.settingsAPI.installUpdate()
   }
 
   const handleOpenRepo = (): void => {
     window.settingsAPI.openExternalUrl(REPO_URL)
+  }
+
+  const handleOpenRelease = (): void => {
+    window.settingsAPI.openExternalUrl(`${REPO_URL}/releases/latest`)
   }
 
   return (
@@ -204,40 +103,94 @@ export function AboutTab(): JSX.Element {
           </p>
         )}
 
-        {/* Update status */}
-        <UpdateSection status={status} onDownload={handleDownload} onInstall={handleInstall} />
+        {/* Check latest version */}
+        {status.state === 'idle' && (
+          <button
+            onClick={handleCheckLatest}
+            style={{
+              fontSize: 12,
+              color: 'var(--c-text-dim)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              textDecoration: 'underline',
+              padding: 0,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--c-text)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--c-text-dim)' }}
+          >
+            Check for latest version
+          </button>
+        )}
 
-        {/* Spacer */}
-        <div style={{ flex: 1 }} />
+        {status.state === 'checking' && (
+          <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{
+              display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
+              border: '2px solid var(--c-text-dim)', borderTopColor: 'transparent',
+              animation: 'ar-spin 0.8s linear infinite',
+            }} />
+            Checking…
+          </p>
+        )}
+
+        {status.state === 'up-to-date' && (
+          <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
+            You are on the latest version.
+          </p>
+        )}
+
+        {status.state === 'available' && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+            <p style={{ fontSize: 12, color: 'var(--c-text-dim)', margin: 0 }}>
+              New version available:{' '}
+              <strong
+                style={{ color: '#f64161', cursor: 'pointer', textDecoration: 'underline' }}
+                onClick={handleOpenRelease}
+                title="Open release page"
+              >
+                {status.latestVersion}
+              </strong>
+            </p>
+          </div>
+        )}
+
+        {status.state === 'error' && (
+          <p style={{ fontSize: 12, color: '#f64161', margin: 0, textAlign: 'center', maxWidth: 260 }}>
+            Failed to check for updates.
+          </p>
+        )}
 
         {/* GitHub button */}
-        <button
-          onClick={handleOpenRepo}
-          title="View on GitHub"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            padding: '7px 16px',
-            fontSize: 13,
-            color: 'var(--c-text-dim)',
-            background: 'transparent',
-            border: '1px solid rgba(128,128,128,0.25)',
-            borderRadius: 8,
-            cursor: 'pointer',
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = 'var(--c-text)'
-            e.currentTarget.style.borderColor = 'rgba(128,128,128,0.6)'
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = 'var(--c-text-dim)'
-            e.currentTarget.style.borderColor = 'rgba(128,128,128,0.25)'
-          }}
-        >
-          <GitHubIcon size={16} />
-          View on GitHub
-        </button>
+        <div style={{ marginTop: 8 }}>
+          <button
+            onClick={handleOpenRepo}
+            title="View on GitHub"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '7px 16px',
+              fontSize: 13,
+              color: 'var(--c-text-dim)',
+              background: 'transparent',
+              border: '1px solid rgba(128,128,128,0.25)',
+              borderRadius: 8,
+              cursor: 'pointer',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = 'var(--c-text)'
+              e.currentTarget.style.borderColor = 'rgba(128,128,128,0.6)'
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = 'var(--c-text-dim)'
+              e.currentTarget.style.borderColor = 'rgba(128,128,128,0.25)'
+            }}
+          >
+            <GitHubIcon size={16} />
+            View on GitHub
+          </button>
+        </div>
       </div>
     </>
   )

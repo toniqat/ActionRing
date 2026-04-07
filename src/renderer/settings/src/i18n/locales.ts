@@ -91,6 +91,12 @@ export interface Translations {
   'shortcuts.doubleClickToRename': string
   'shortcuts.clickToRename': string
   'shortcuts.executionError': string
+  'shortcuts.addToStart': string
+  'shortcuts.addToEnd': string
+  'shortcuts.noVarsAvailable': string
+  'shortcuts.noReturnValsAvailable': string
+  'shortcuts.selectVariable': string
+  'shortcuts.selectReturnValue': string
 
   // Shortcuts modal
   'modal.editShortcuts': string
@@ -107,13 +113,33 @@ export interface Translations {
 
   // Action types
   'action.launch': string
-  'action.shortcut': string
+  'action.keyboard': string
   'action.shell': string
   'action.system': string
+  'action.link': string
+  'action.mouseMove': string
+  'action.mouseClick': string
   'action.launchDesc': string
-  'action.shortcutDesc': string
+  'action.keyboardDesc': string
   'action.shellDesc': string
   'action.systemDesc': string
+  'action.linkDesc': string
+  'action.mouseMoveDesc': string
+  'action.mouseClickDesc': string
+
+  // Mouse action labels
+  'mouse.modeSet': string
+  'mouse.modeOffset': string
+  'mouse.x': string
+  'mouse.y': string
+  'mouse.button': string
+  'mouse.left': string
+  'mouse.right': string
+  'mouse.middle': string
+  'mouse.side1': string
+  'mouse.side2': string
+  'mouse.wheelUp': string
+  'mouse.wheelDown': string
 
   // Script / Logic node types
   'action.ifElse': string
@@ -126,6 +152,10 @@ export interface Translations {
   'action.waitDesc': string
   'action.setVar': string
   'action.setVarDesc': string
+  'action.list': string
+  'action.listDesc': string
+  'action.dict': string
+  'action.dictDesc': string
   'action.toast': string
   'action.toastDesc': string
   'action.runShortcut': string
@@ -143,8 +173,18 @@ export interface Translations {
   'palette.all': string
   'palette.actions': string
   'palette.scripts': string
+  'palette.values': string
   'palette.shortcuts': string
   'palette.allGroups': string
+  'palette.variables': string
+  'palette.returnValues': string
+  'palette.noValues': string
+  'palette.valueNotDefined': string
+  'palette.sub.controls': string
+  'palette.sub.system': string
+  'palette.sub.flow': string
+  'palette.sub.data': string
+  'palette.sub.utility': string
 
   // Script node UI
   'script.condition': string
@@ -161,6 +201,9 @@ export interface Translations {
   'script.noSubActions': string
   'script.selectShortcut': string
   'script.noShortcuts': string
+  'script.pickFromVariable': string
+  'script.pickFromReturnValue': string
+  'script.browseFile': string
   'script.addInput': string
   'script.inputParam': string
   'script.inputValue': string
@@ -172,6 +215,15 @@ export interface Translations {
   'script.addCriteria': string
   'script.conditionVar': string
   'script.conditionVal': string
+  // Condition mode (if-else / switch)
+  'script.conditionModeIfElse': string
+  'script.conditionModeSwitch': string
+  'script.switchValue': string
+  'script.caseLabel': string
+  'script.defaultLabel': string
+  'script.addCase': string
+  'script.addDefault': string
+  'script.endSwitch': string
   // Loop mode
   'script.loopModeRepeat': string
   'script.loopModeFor': string
@@ -180,18 +232,35 @@ export interface Translations {
   'script.loopTo': string
   'script.loopStep': string
   'script.loopItemVar': string
+  'script.loopKeyVar': string
   'script.loopListVar': string
+  // Loop context menu (assign loop values)
+  'script.loopAssignCount': string
+  'script.loopAssignIndex': string
+  'script.loopAssignValue': string
+  'script.loopAssignKey': string
+  'script.loopForeachIndex': string
+  'script.loopForeachValue': string
+  'script.loopForeachKey': string
+  'script.loopForeachDictValue': string
   // Variable CRUD
   'script.varDataType': string
-  'script.varTypeString': string
+  'script.varTypeSingle': string
   'script.varTypeList': string
   'script.varTypeDict': string
+  'script.varModeDefine': string
+  'script.varModeEdit': string
   'script.varOpSet': string
   'script.varOpGet': string
   'script.varOpPush': string
   'script.varOpRemove': string
   'script.varKey': string
   'script.varResultVar': string
+  'script.varAddItem': string
+  'script.varAddEntry': string
+  'script.varItemPlaceholder': string
+  'script.varKeyPlaceholder': string
+  'script.varValuePlaceholder': string
   // Stop node
   'script.stopReturnVar': string
   'script.stopReturnValue': string
@@ -215,8 +284,22 @@ export interface Translations {
   'script.waitVariable': string
   'script.waitAppExit': string
   'script.waitAppTarget': string
+  'script.waitKeyInput': string
   // Comment node
   'script.commentPlaceholder': string
+  // Return value picker
+  'script.selectReturnValue': string
+  'script.returnValuePickerHint': string
+  'script.returnLaunchTarget': string
+  'script.returnKeysCombo': string
+  'script.returnExitCode': string
+  'script.returnLoopCount': string
+  'script.returnLoopIndex': string
+  'script.returnLoopItem': string
+  'script.returnVarValue': string
+  'script.returnOutputVar': string
+  'script.returnResultVar': string
+  'script.returnReturnVar': string
 
   // System actions
   'system.volume-up': string
@@ -372,6 +455,7 @@ export interface Translations {
   'sidebar.allShortcuts': string
   'sidebar.noShortcuts': string
   'sidebar.noMatch': string
+  'sidebar.ungrouped': string
   'sidebar.confirmOverwriteTitle': string
   'sidebar.confirmOverwriteMessage': string
   'sidebar.confirmOverwriteAction': string
@@ -460,6 +544,12 @@ const en: Translations = {
   'shortcuts.doubleClickToRename': 'Double-click to rename',
   'shortcuts.clickToRename': 'Click to rename',
   'shortcuts.executionError': 'Execution failed',
+  'shortcuts.addToStart': 'Add to beginning',
+  'shortcuts.addToEnd': 'Add to end',
+  'shortcuts.noVarsAvailable': 'No variables available',
+  'shortcuts.noReturnValsAvailable': 'No return values available',
+  'shortcuts.selectVariable': 'Select variable',
+  'shortcuts.selectReturnValue': 'Select return value',
 
   'modal.editShortcuts': 'Edit Shortcuts',
   'modal.sequence': 'Sequence — runs top to bottom',
@@ -468,19 +558,39 @@ const en: Translations = {
   'modal.cancel': 'Cancel',
   'modal.save': 'Save',
   'modal.browse': 'Browse',
-  'modal.appPath': 'Application path…',
+  'modal.appPath': 'App or file path…',
   'modal.shellCmd': 'e.g. notepad.exe',
   'modal.dragToReorder': 'Drag to reorder',
   'modal.remove': 'Remove',
 
   'action.launch': 'Launch App',
-  'action.shortcut': 'Keyboard Shortcut',
+  'action.keyboard': 'Keyboard',
   'action.shell': 'Shell Command',
   'action.system': 'System Action',
+  'action.link': 'Open Link',
+  'action.mouseMove': 'Mouse Move',
+  'action.mouseClick': 'Mouse Click',
   'action.launchDesc': 'Open an application or file',
-  'action.shortcutDesc': 'Send a key combination',
+  'action.keyboardDesc': 'Send a key combination',
   'action.shellDesc': 'Run a terminal command',
   'action.systemDesc': 'Control system functions',
+  'action.linkDesc': 'Open a URL in the default browser',
+  'action.mouseMoveDesc': 'Move cursor to a position',
+  'action.mouseClickDesc': 'Simulate a mouse button click',
+
+  // Mouse action labels
+  'mouse.modeSet': 'Set (absolute)',
+  'mouse.modeOffset': 'Offset (relative)',
+  'mouse.x': 'X',
+  'mouse.y': 'Y',
+  'mouse.button': 'Button',
+  'mouse.left': 'Left Click',
+  'mouse.right': 'Right Click',
+  'mouse.middle': 'Middle Click',
+  'mouse.side1': 'Side Button 1',
+  'mouse.side2': 'Side Button 2',
+  'mouse.wheelUp': 'Wheel Up',
+  'mouse.wheelDown': 'Wheel Down',
 
   'action.ifElse': 'Condition',
   'action.ifElseDesc': 'Branch execution based on multiple conditions',
@@ -491,7 +601,11 @@ const en: Translations = {
   'action.wait': 'Wait',
   'action.waitDesc': 'Pause execution for a set time',
   'action.setVar': 'Variable',
-  'action.setVarDesc': 'Set, get, push, or remove from a string, list, or dictionary variable',
+  'action.setVarDesc': 'Set a variable (auto-infers string, number, or boolean type)',
+  'action.list': 'List',
+  'action.listDesc': 'Create or modify a list variable',
+  'action.dict': 'Dictionary',
+  'action.dictDesc': 'Create or modify a dictionary variable',
   'action.toast': 'Toast Notification',
   'action.toastDesc': 'Show a system notification message',
   'action.runShortcut': 'Run Shortcut',
@@ -509,8 +623,18 @@ const en: Translations = {
   'palette.all': 'All',
   'palette.actions': 'Actions',
   'palette.scripts': 'Scripts',
+  'palette.values': 'Values',
   'palette.shortcuts': 'Shortcuts',
   'palette.allGroups': 'All Groups',
+  'palette.variables': 'Variables',
+  'palette.returnValues': 'Return Values',
+  'palette.noValues': 'No values defined yet',
+  'palette.valueNotDefined': 'Cannot assign — value is not yet defined at this point',
+  'palette.sub.controls': 'Controls',
+  'palette.sub.system': 'System',
+  'palette.sub.flow': 'Flow',
+  'palette.sub.data': 'Data',
+  'palette.sub.utility': 'Utility',
 
   'script.condition': 'Condition',
   'script.thenLabel': 'THEN',
@@ -526,6 +650,9 @@ const en: Translations = {
   'script.noSubActions': 'No actions — click "+ Add action"',
   'script.selectShortcut': 'Select shortcut…',
   'script.noShortcuts': 'No shortcuts in library',
+  'script.pickFromVariable': 'Pick from variable',
+  'script.pickFromReturnValue': 'Pick from return value',
+  'script.browseFile': 'Browse file',
   'script.addInput': '+ Add input',
   'script.inputParam': 'param',
   'script.inputValue': 'value / $var',
@@ -538,6 +665,15 @@ const en: Translations = {
   'script.conditionVar': '$variable',
   'script.conditionVal': 'value',
 
+  'script.conditionModeIfElse': 'If / Else',
+  'script.conditionModeSwitch': 'Switch',
+  'script.switchValue': '$variable',
+  'script.caseLabel': 'CASE',
+  'script.defaultLabel': 'DEFAULT',
+  'script.addCase': '+ Add case',
+  'script.addDefault': '+ Add default',
+  'script.endSwitch': 'END SWITCH',
+
   'script.loopModeRepeat': 'Repeat',
   'script.loopModeFor': 'For',
   'script.loopModeForeach': 'ForEach',
@@ -545,18 +681,34 @@ const en: Translations = {
   'script.loopTo': 'to',
   'script.loopStep': 'step',
   'script.loopItemVar': '$item',
+  'script.loopKeyVar': '$key',
   'script.loopListVar': '$list',
+  'script.loopAssignCount': 'Iteration Count',
+  'script.loopAssignIndex': 'Current Index (i)',
+  'script.loopAssignValue': 'Current Value',
+  'script.loopAssignKey': 'Current Key',
+  'script.loopForeachIndex': 'Current Index',
+  'script.loopForeachValue': 'Current Value',
+  'script.loopForeachKey': 'Current Key',
+  'script.loopForeachDictValue': 'Current Value',
 
   'script.varDataType': 'Type',
-  'script.varTypeString': 'String',
+  'script.varTypeSingle': 'Single',
   'script.varTypeList': 'List',
   'script.varTypeDict': 'Dict',
+  'script.varModeDefine': 'Define',
+  'script.varModeEdit': 'Edit',
   'script.varOpSet': 'Set',
   'script.varOpGet': 'Get',
   'script.varOpPush': 'Push',
   'script.varOpRemove': 'Remove',
   'script.varKey': 'key / index',
   'script.varResultVar': '→ $result',
+  'script.varAddItem': '+ Add item',
+  'script.varAddEntry': '+ Add entry',
+  'script.varItemPlaceholder': 'item value',
+  'script.varKeyPlaceholder': 'key',
+  'script.varValuePlaceholder': 'value',
 
   'script.stopReturnVar': 'Set $var',
   'script.stopReturnValue': 'value',
@@ -579,8 +731,22 @@ const en: Translations = {
   'script.waitVariable': 'Variable',
   'script.waitAppExit': 'App Exit',
   'script.waitAppTarget': 'launch target',
+  'script.waitKeyInput': 'Key Input',
 
   'script.commentPlaceholder': 'Write a comment…',
+
+  'script.selectReturnValue': 'Select Return Value',
+  'script.returnValuePickerHint': 'Click a return value below each action to use it',
+  'script.returnLaunchTarget': 'App Path',
+  'script.returnKeysCombo': 'Key Combo',
+  'script.returnExitCode': 'Exit Code',
+  'script.returnLoopCount': 'Iteration Count',
+  'script.returnLoopIndex': 'Last Index',
+  'script.returnLoopItem': 'Last Item',
+  'script.returnVarValue': 'Value',
+  'script.returnOutputVar': 'Output',
+  'script.returnResultVar': 'Result',
+  'script.returnReturnVar': 'Return',
 
   'system.volume-up': 'Volume Up',
   'system.volume-down': 'Volume Down',
@@ -724,6 +890,7 @@ const en: Translations = {
   'sidebar.allShortcuts': 'All',
   'sidebar.noShortcuts': 'No shortcuts in library.',
   'sidebar.noMatch': 'No matching shortcuts.',
+  'sidebar.ungrouped': 'Ungrouped',
   'sidebar.confirmOverwriteTitle': 'Replace slot contents?',
   'sidebar.confirmOverwriteMessage': 'will overwrite the current actions for this slot.',
   'sidebar.confirmOverwriteAction': 'Replace',
@@ -736,7 +903,7 @@ const ko: Translations = {
   'tab.configure': '액션 링',
   'tab.general': '설정',
   'tab.about': '정보',
-  'tab.shortcuts': '단축키',
+  'tab.shortcuts': '단축어',
 
   'general.title': '설정',
   'general.theme': '테마',
@@ -788,9 +955,9 @@ const ko: Translations = {
   'panel.categoryText': '텍스트',
   'panel.categoryAnimation': '애니메이션',
 
-  'slot.shortcuts': '단축키',
-  'slot.editShortcuts': '단축키 편집 ›',
-  'slot.noActions': '단축키가 없습니다 — 오른쪽 패널에서 드래그하여 할당하세요.',
+  'slot.shortcuts': '단축어',
+  'slot.editShortcuts': '단축어 편집 ›',
+  'slot.noActions': '단축어가 없습니다 — 오른쪽 패널에서 드래그하여 할당하세요.',
   'slot.folder': '폴더',
   'slot.editSubSlots': '서브 슬롯 편집',
   'slot.noSubSlots': '서브 슬롯 없음 — "+ 서브 슬롯 추가"를 사용하세요.',
@@ -800,7 +967,7 @@ const ko: Translations = {
   'slot.importPreset': '프리셋 가져오기',
   'slot.exportPreset': '프리셋 내보내기',
   'slot.editAppearance': '외관 편집',
-  'slot.typeShortcut': '단축키',
+  'slot.typeShortcut': '단축어',
   'slot.typeFolder': '폴더',
 
   'shortcuts.undo': '실행 취소',
@@ -812,27 +979,53 @@ const ko: Translations = {
   'shortcuts.doubleClickToRename': '더블클릭으로 이름 변경',
   'shortcuts.clickToRename': '클릭하여 이름 변경',
   'shortcuts.executionError': '실행 실패',
+  'shortcuts.addToStart': '처음으로 넣기',
+  'shortcuts.addToEnd': '마지막에 넣기',
+  'shortcuts.noVarsAvailable': '사용 가능한 변수 없음',
+  'shortcuts.noReturnValsAvailable': '사용 가능한 반환값 없음',
+  'shortcuts.selectVariable': '변수 선택',
+  'shortcuts.selectReturnValue': '반환값 선택',
 
-  'modal.editShortcuts': '단축키 편집',
+  'modal.editShortcuts': '단축어 편집',
   'modal.sequence': '순서 — 위에서 아래로 실행',
   'modal.noActionsYet': '작업 없음 — 라이브러리에서 드래그하세요 →',
   'modal.searchActions': '작업 검색…',
   'modal.cancel': '취소',
   'modal.save': '저장',
   'modal.browse': '찾아보기',
-  'modal.appPath': '앱 경로…',
+  'modal.appPath': '앱 또는 파일 경로…',
   'modal.shellCmd': '예: notepad.exe',
   'modal.dragToReorder': '드래그하여 순서 변경',
   'modal.remove': '제거',
 
   'action.launch': '앱 실행',
-  'action.shortcut': '키보드 단축키',
+  'action.keyboard': '키보드',
   'action.shell': '셸 명령',
   'action.system': '시스템 작업',
+  'action.link': '링크 열기',
+  'action.mouseMove': '마우스 이동',
+  'action.mouseClick': '마우스 클릭',
   'action.launchDesc': '앱 또는 파일 열기',
-  'action.shortcutDesc': '키 조합 전송',
+  'action.keyboardDesc': '키 조합 전송',
   'action.shellDesc': '터미널 명령 실행',
   'action.systemDesc': '시스템 기능 제어',
+  'action.linkDesc': '기본 브라우저에서 URL 열기',
+  'action.mouseMoveDesc': '커서를 지정 위치로 이동',
+  'action.mouseClickDesc': '마우스 버튼 클릭 시뮬레이션',
+
+  // 마우스 액션 라벨
+  'mouse.modeSet': '설정 (절대좌표)',
+  'mouse.modeOffset': '이동 (상대좌표)',
+  'mouse.x': 'X',
+  'mouse.y': 'Y',
+  'mouse.button': '버튼',
+  'mouse.left': '좌클릭',
+  'mouse.right': '우클릭',
+  'mouse.middle': '휠 클릭',
+  'mouse.side1': '사이드 버튼 1',
+  'mouse.side2': '사이드 버튼 2',
+  'mouse.wheelUp': '휠 위로',
+  'mouse.wheelDown': '휠 아래로',
 
   'action.ifElse': '조건',
   'action.ifElseDesc': '여러 조건에 따라 실행 분기',
@@ -843,16 +1036,20 @@ const ko: Translations = {
   'action.wait': '대기',
   'action.waitDesc': '설정된 시간만큼 실행 일시 중지',
   'action.setVar': '변수',
-  'action.setVarDesc': '문자열, 리스트, 딕셔너리 변수에 값을 설정, 가져오기, 추가 또는 제거',
+  'action.setVarDesc': '변수에 값 설정 (문자열, 숫자, 불리언 자동 추론)',
+  'action.list': '리스트',
+  'action.listDesc': '리스트 변수 생성 또는 수정',
+  'action.dict': '딕셔너리',
+  'action.dictDesc': '딕셔너리 변수 생성 또는 수정',
   'action.toast': '토스트 알림',
   'action.toastDesc': '시스템 알림 메시지 표시',
-  'action.runShortcut': '단축키 실행',
-  'action.runShortcutDesc': '입력값을 전달하고 반환값을 캡처하여 단축키 실행',
+  'action.runShortcut': '단축어 실행',
+  'action.runShortcutDesc': '입력값을 전달하고 반환값을 캡처하여 단축어 실행',
 
-  'action.escape': 'Escape',
+  'action.escape': '탈출',
   'action.escapeDesc': '현재 반복문 탈출',
   'action.stop': '중지',
-  'action.stopDesc': '전체 단축키 시퀀스를 즉시 중단',
+  'action.stopDesc': '전체 단축어 시퀀스를 즉시 중단',
   'action.calculate': '계산',
   'action.calculateDesc': '수학 연산을 수행하고 결과를 저장',
   'action.comment': '주석',
@@ -861,8 +1058,18 @@ const ko: Translations = {
   'palette.all': '전체',
   'palette.actions': '액션',
   'palette.scripts': '스크립트',
-  'palette.shortcuts': '단축키',
+  'palette.values': '값',
+  'palette.shortcuts': '단축어',
   'palette.allGroups': '전체 그룹',
+  'palette.variables': '변수',
+  'palette.returnValues': '반환값',
+  'palette.noValues': '아직 정의된 값이 없습니다',
+  'palette.valueNotDefined': '값이 정의되기 전이므로 할당할 수 없습니다',
+  'palette.sub.controls': '조작',
+  'palette.sub.system': '시스템',
+  'palette.sub.flow': '제어',
+  'palette.sub.data': '데이터',
+  'palette.sub.utility': '유틸리티',
 
   'script.condition': '조건',
   'script.thenLabel': '그러면',
@@ -876,8 +1083,11 @@ const ko: Translations = {
   'script.message': '메시지',
   'script.addAction': '+ 액션 추가',
   'script.noSubActions': '액션 없음 — "+ 액션 추가" 클릭',
-  'script.selectShortcut': '단축키 선택…',
-  'script.noShortcuts': '라이브러리에 단축키 없음',
+  'script.selectShortcut': '단축어 선택…',
+  'script.noShortcuts': '라이브러리에 단축어 없음',
+  'script.pickFromVariable': '변수에서 불러오기',
+  'script.pickFromReturnValue': '반환값에서 가져오기',
+  'script.browseFile': '파일 찾아보기',
   'script.addInput': '+ 입력 추가',
   'script.inputParam': '매개변수',
   'script.inputValue': '값 / $변수',
@@ -890,6 +1100,15 @@ const ko: Translations = {
   'script.conditionVar': '$변수',
   'script.conditionVal': '값',
 
+  'script.conditionModeIfElse': '참 또는 거짓',
+  'script.conditionModeSwitch': '특정 값',
+  'script.switchValue': '$변수',
+  'script.caseLabel': '분기',
+  'script.defaultLabel': '기본',
+  'script.addCase': '+ 분기 추가',
+  'script.addDefault': '+ 기본 분기 추가',
+  'script.endSwitch': 'END SWITCH',
+
   'script.loopModeRepeat': '반복',
   'script.loopModeFor': 'For',
   'script.loopModeForeach': 'ForEach',
@@ -897,18 +1116,34 @@ const ko: Translations = {
   'script.loopTo': '까지',
   'script.loopStep': '간격',
   'script.loopItemVar': '$항목',
+  'script.loopKeyVar': '$키',
   'script.loopListVar': '$리스트',
+  'script.loopAssignCount': '현재 순환 횟수',
+  'script.loopAssignIndex': '현재 순환값 (i)',
+  'script.loopAssignValue': '현재 Value',
+  'script.loopAssignKey': '현재 Key',
+  'script.loopForeachIndex': '현재 인덱스',
+  'script.loopForeachValue': '현재 값',
+  'script.loopForeachKey': '현재 Key',
+  'script.loopForeachDictValue': '현재 Value',
 
   'script.varDataType': '타입',
-  'script.varTypeString': '문자열',
+  'script.varTypeSingle': '단일',
   'script.varTypeList': '리스트',
   'script.varTypeDict': '딕셔너리',
+  'script.varModeDefine': '정의',
+  'script.varModeEdit': '편집',
   'script.varOpSet': '설정',
   'script.varOpGet': '가져오기',
   'script.varOpPush': '추가',
   'script.varOpRemove': '제거',
   'script.varKey': '키 / 인덱스',
   'script.varResultVar': '→ $결과',
+  'script.varAddItem': '+ 항목 추가',
+  'script.varAddEntry': '+ 항목 추가',
+  'script.varItemPlaceholder': '항목 값',
+  'script.varKeyPlaceholder': '키',
+  'script.varValuePlaceholder': '값',
 
   'script.stopReturnVar': '$변수 설정',
   'script.stopReturnValue': '값',
@@ -931,8 +1166,22 @@ const ko: Translations = {
   'script.waitVariable': '변수',
   'script.waitAppExit': '앱 종료',
   'script.waitAppTarget': '실행 대상',
+  'script.waitKeyInput': '키 입력',
 
   'script.commentPlaceholder': '주석 작성…',
+
+  'script.selectReturnValue': '반환값 선택',
+  'script.returnValuePickerHint': '각 액션 아래의 반환값을 클릭하여 사용하세요',
+  'script.returnLaunchTarget': '앱 경로',
+  'script.returnKeysCombo': '키 조합',
+  'script.returnExitCode': '종료 코드',
+  'script.returnLoopCount': '반복 횟수',
+  'script.returnLoopIndex': '마지막 인덱스',
+  'script.returnLoopItem': '마지막 항목',
+  'script.returnVarValue': '값',
+  'script.returnOutputVar': '출력값',
+  'script.returnResultVar': '결과값',
+  'script.returnReturnVar': '반환값',
 
   'system.volume-up': '볼륨 높이기',
   'system.volume-down': '볼륨 낮추기',
@@ -1019,32 +1268,32 @@ const ko: Translations = {
   'lib.gallery': '갤러리',
   'lib.recent': '최근',
   'lib.favorites': '즐겨찾기',
-  'lib.create': '+ 단축키 만들기',
+  'lib.create': '+ 단축어 만들기',
   'lib.import': '가져오기',
-  'lib.namePlaceholder': '단축키 이름…',
+  'lib.namePlaceholder': '단축어 이름…',
   'lib.confirm': '만들기',
   'lib.cancel': '취소',
   'lib.edit': '편집',
   'lib.noActions': '작업 없음',
   'lib.actionsCount': '{n}개 작업',
-  'lib.emptyGallery': '단축키가 없습니다. "+ 단축키 만들기"를 클릭하여 추가하세요.',
-  'lib.emptyRecent': '최근 사용한 단축키가 없습니다.',
+  'lib.emptyGallery': '단축어가 없습니다. "+ 단축어 만들기"를 클릭하여 추가하세요.',
+  'lib.emptyRecent': '최근 사용한 단축어가 없습니다.',
   'lib.emptyFavorites': '즐겨찾기가 없습니다. 별표를 눌러 추가하세요.',
   'lib.showMore': '더 보기',
   'lib.showLess': '접기',
-  'lib.deleteTitle': '단축키를 삭제하시겠습니까?',
+  'lib.deleteTitle': '단축어를 삭제하시겠습니까?',
   'lib.orphanWarning': '{n}개 슬롯에서 사용 중입니다. 삭제하면 참조가 끊어집니다.',
   'lib.deleteAnyway': '삭제',
-  'lib.headerTitle': '단축키 라이브러리',
+  'lib.headerTitle': '단축어 라이브러리',
   'lib.groups': '그룹',
   'lib.addGroup': '그룹 추가',
   'lib.deleteGroup': '그룹 삭제',
   'lib.deleteGroupTitle': '그룹을 삭제하시겠습니까?',
-  'lib.deleteGroupMessage': '"{name}"을 삭제하시겠습니까? 단축키는 갤러리로 이동됩니다.',
+  'lib.deleteGroupMessage': '"{name}"을 삭제하시겠습니까? 단축어는 갤러리로 이동됩니다.',
   'lib.exportGroup': '그룹 내보내기',
   'lib.moveToGroup': '그룹으로 이동',
   'lib.duplicate': '복제',
-  'lib.emptyGroup': '이 그룹에 단축키가 없습니다. 만들거나 여기로 드래그하세요.',
+  'lib.emptyGroup': '이 그룹에 단축어가 없습니다. 만들거나 여기로 드래그하세요.',
   'lib.createNewGroup': '새 그룹 만들기',
   'lib.viewCard': '카드 보기',
   'lib.viewList': '목록 보기',
@@ -1071,11 +1320,12 @@ const ko: Translations = {
   'general.resetConfirmMessage': '모든 설정을 기본값으로 초기화하시겠습니까? 프로필, 슬롯, 외관을 포함한 모든 구성이 초기화됩니다. 이 작업은 되돌릴 수 없습니다.',
   'general.resetConfirmAction': '초기화',
 
-  'sidebar.title': '단축키',
-  'sidebar.searchPlaceholder': '단축키 검색…',
+  'sidebar.title': '단축어',
+  'sidebar.searchPlaceholder': '단축어 검색…',
   'sidebar.allShortcuts': '전체',
-  'sidebar.noShortcuts': '라이브러리에 단축키가 없습니다.',
-  'sidebar.noMatch': '일치하는 단축키가 없습니다.',
+  'sidebar.noShortcuts': '라이브러리에 단축어가 없습니다.',
+  'sidebar.noMatch': '일치하는 단축어가 없습니다.',
+  'sidebar.ungrouped': '미분류',
   'sidebar.confirmOverwriteTitle': '슬롯 내용을 교체할까요?',
   'sidebar.confirmOverwriteMessage': '현재 슬롯의 동작이 교체됩니다.',
   'sidebar.confirmOverwriteAction': '교체',

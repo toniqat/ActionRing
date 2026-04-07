@@ -18,6 +18,7 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import type { AppConfig, SlotConfig, ShortcutEntry, ShortcutGroup } from '@shared/config.types'
+import type { ResourceIconEntry } from '@shared/ipc.types'
 import { useSettings } from '../../context/SettingsContext'
 import { useT } from '../../i18n/I18nContext'
 import { UIIcon } from '@shared/UIIcon'
@@ -32,18 +33,26 @@ function generateId(): string {
 
 const ACTION_ICONS: Record<string, { icon: string; color: string }> = {
   launch:          { icon: 'launch',         color: '#3b82f6' },
-  shortcut:        { icon: 'shortcut',       color: '#8b5cf6' },
+  keyboard:        { icon: 'keyboard',       color: '#8b5cf6' },
   shell:           { icon: 'shell',          color: '#10b981' },
   system:          { icon: 'system',         color: '#f59e0b' },
-  'if-else':       { icon: 'if_else',        color: '#ec4899' },
-  loop:            { icon: 'loop',           color: '#14b8a6' },
-  wait:            { icon: 'wait',           color: '#94a3b8' },
-  'set-var':       { icon: 'set_var',        color: '#f97316' },
+  link:            { icon: 'action_link',    color: '#06b6d4' },
+  'mouse-move':    { icon: 'mouse_move',     color: '#f472b6' },
+  'mouse-click':   { icon: 'mouse_click',    color: '#f472b6' },
+  'if-else':       { icon: 'if_else',        color: '#2dd4bf' },
+  loop:            { icon: 'loop',           color: '#2dd4bf' },
+  wait:            { icon: 'wait',           color: '#5eead4' },
+  'set-var':       { icon: 'variable',       color: '#f472b6' },
   toast:           { icon: 'toast',          color: '#a78bfa' },
   'run-shortcut':  { icon: 'call_shortcut',  color: '#6366f1' },
+  sequence:        { icon: 'all_inclusive',  color: '#2dd4bf' },
+  escape:          { icon: 'exit_to_app',   color: '#5eead4' },
+  stop:            { icon: 'stop',          color: '#5eead4' },
+  calculate:       { icon: 'calculate',     color: '#10b981' },
+  comment:         { icon: 'comment',       color: '#6b7280' },
 }
 
-const DEFAULT_ICON = { icon: 'shortcut', color: '#8b5cf6' }
+const DEFAULT_ICON = { icon: 'keyboard', color: '#8b5cf6' }
 
 function resolveEntryIcon(entry: ShortcutEntry): { icon: string; color: string } {
   if (entry.icon) return { icon: entry.icon, color: '#8b5cf6' }
@@ -52,15 +61,20 @@ function resolveEntryIcon(entry: ShortcutEntry): { icon: string; color: string }
   return DEFAULT_ICON
 }
 
-/** Renders the correct icon element for a ShortcutEntry, handling builtin, custom, and UI icons. */
-function renderEntryIconEl(entry: ShortcutEntry, size: number): JSX.Element | null {
+/** Renders the correct icon element for a ShortcutEntry, handling builtin, resource, custom, and UI icons. */
+function renderEntryIconEl(entry: ShortcutEntry, size: number, resourceIcons: ResourceIconEntry[]): JSX.Element | null {
   if (!entry.icon) {
     const first = entry.actions[0]
     const ic = first ? (ACTION_ICONS[first.type] ?? DEFAULT_ICON) : DEFAULT_ICON
     return <UIIcon name={ic.icon} size={size} />
   }
   if (entry.iconIsCustom) {
-    // Custom file icon — render via img (works for SVG and raster in Electron)
+    // Resource SVG icon — render inline SVG from loaded content
+    if (entry.icon.endsWith('.svg')) {
+      const resource = resourceIcons.find((e) => e.absPath === entry.icon)
+      if (resource) return <SVGIcon svgString={resource.svgContent} size={size} />
+    }
+    // Custom non-SVG file icon — render via img
     return <img src={`file://${entry.icon}`} style={{ width: size, height: size, objectFit: 'contain' }} alt="" />
   }
   const builtin = BUILTIN_ICONS.find((ic) => ic.name === entry.icon)
@@ -148,7 +162,6 @@ interface MenuState {
   x: number   // button rect.right
   y: number   // button rect.bottom
   xl: number  // button rect.left (for flip-left positioning)
-  mode: 'root' | 'move-to-group'
 }
 
 const RECENT_MAX = 64
@@ -244,13 +257,15 @@ function ShortcutCard({
   viewMode,
   onMenuOpen,
   groupName,
+  resourceIcons,
 }: {
   entry: ShortcutEntry
   viewMode: ViewMode
   onMenuOpen: (e: React.MouseEvent, id: string) => void
   groupName?: string
+  resourceIcons: ResourceIconEntry[]
 }): JSX.Element {
-  const { icon, color } = resolveEntryIcon(entry)
+  const { color } = resolveEntryIcon(entry)
   const actionBadges = entry.actions.slice(0, 4)
   const extra = entry.actions.length - actionBadges.length
 
@@ -284,7 +299,7 @@ function ShortcutCard({
         cursor: 'default',
       }}>
         <div style={{ width: 26, height: 26, borderRadius: 6, background: badgeColor + '33', border: `1px solid ${badgeColor}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: badgeColor }}>
-          {renderEntryIconEl(entry, 14)}
+          {renderEntryIconEl(entry, 14, resourceIcons)}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -315,7 +330,7 @@ function ShortcutCard({
       {/* Top row: icon + name + menu */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
         <div style={{ width: 28, height: 28, borderRadius: 7, background: badgeColor + '33', border: `1px solid ${badgeColor}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: badgeColor }}>
-          {renderEntryIconEl(entry, 15)}
+          {renderEntryIconEl(entry, 15, resourceIcons)}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--c-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -359,11 +374,13 @@ function SortableCardWrapper({
   viewMode,
   onMenuOpen,
   groupName,
+  resourceIcons,
 }: {
   entry: ShortcutEntry
   viewMode: ViewMode
   onMenuOpen: (e: React.MouseEvent, id: string) => void
   groupName?: string
+  resourceIcons: ResourceIconEntry[]
 }): JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: entry.id })
 
@@ -379,7 +396,7 @@ function SortableCardWrapper({
       {...attributes}
       {...listeners}
     >
-      <ShortcutCard entry={entry} viewMode={viewMode} onMenuOpen={onMenuOpen} groupName={groupName} />
+      <ShortcutCard entry={entry} viewMode={viewMode} onMenuOpen={onMenuOpen} groupName={groupName} resourceIcons={resourceIcons} />
     </div>
   )
 }
@@ -437,14 +454,19 @@ function MenuItem({
   children,
   danger,
   muted,
+  focused,
   rightAdornment,
+  onMouseEnterItem,
 }: {
   onClick: () => void
   children: React.ReactNode
   danger?: boolean
   muted?: boolean
+  focused?: boolean
   rightAdornment?: React.ReactNode
+  onMouseEnterItem?: () => void
 }): JSX.Element {
+  const bgColor = danger ? 'rgba(239,68,68,0.1)' : 'var(--c-border)'
   return (
     <button
       onMouseDown={(e) => e.preventDefault()}
@@ -452,17 +474,17 @@ function MenuItem({
       style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         gap: 8, padding: '6px 12px', width: '100%',
-        background: 'none', border: 'none',
+        background: focused ? bgColor : 'none', border: 'none',
         color: danger ? '#ef4444' : muted ? 'var(--c-text-dim)' : 'var(--c-text)',
         fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
         textAlign: 'left', whiteSpace: 'nowrap',
         transition: 'background 0.1s',
       }}
       onMouseEnter={(e) => {
-        const b = e.currentTarget as HTMLButtonElement
-        b.style.background = danger ? 'rgba(239,68,68,0.1)' : 'var(--c-border)'
+        (e.currentTarget as HTMLButtonElement).style.background = bgColor
+        onMouseEnterItem?.()
       }}
-      onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'none' }}
+      onMouseLeave={(e) => { if (!focused) (e.currentTarget as HTMLButtonElement).style.background = 'none' }}
     >
       <span>{children}</span>
       {rightAdornment && <span style={{ color: 'var(--c-text-dim)', fontSize: 10 }}>{rightAdornment}</span>}
@@ -491,12 +513,22 @@ function ShortcutsTabInner(): JSX.Element {
   const [deleteTarget, setDeleteTarget] = useState<ShortcutEntry | null>(null)
   const [deleteGroupTarget, setDeleteGroupTarget] = useState<ShortcutGroup | null>(null)
   const [menuState, setMenuState] = useState<MenuState | null>(null)
+  const [menuFocusIdx, setMenuFocusIdx] = useState(-1)
+  const [submenuOpen, setSubmenuOpen] = useState(false)
+  const [submenuFocusIdx, setSubmenuFocusIdx] = useState(-1)
+  const [focusLevel, setFocusLevel] = useState<'main' | 'sub'>('main')
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null)
   const [renamingGroupValue, setRenamingGroupValue] = useState('')
+  const [resourceIcons, setResourceIcons] = useState<ResourceIconEntry[]>([])
 
   const groupRenameInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const submenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    window.settingsAPI?.getResourceIcons?.().then(setResourceIcons).catch(() => {})
+  }, [])
 
   useEffect(() => {
     if (renamingGroupId !== null) setTimeout(() => groupRenameInputRef.current?.select(), 0)
@@ -504,14 +536,76 @@ function ShortcutsTabInner(): JSX.Element {
 
   useEffect(() => {
     if (!menuState) return
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+    const handleOutside = (e: MouseEvent) => {
+      const inMain = menuRef.current?.contains(e.target as Node)
+      const inSub = submenuRef.current?.contains(e.target as Node)
+      if (!inMain && !inSub) {
         setMenuState(null)
+        setSubmenuOpen(false)
       }
     }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+    document.addEventListener('mousedown', handleOutside)
+    return () => document.removeEventListener('mousedown', handleOutside)
   }, [menuState])
+
+  // Keyboard navigation for menu
+  useEffect(() => {
+    if (!menuState) return
+
+    // Root menu items: favorite, edit, separator, moveToGroup, duplicate, separator, delete
+    // Actionable indices: 0=favorite, 1=edit, 2=moveToGroup, 3=duplicate, 4=delete
+    const ROOT_COUNT = 5
+    const MOVE_GROUP_IDX = 2
+    // Submenu items: default + groups + createNew
+    const subCount = 1 + groups.length + 1
+
+    const handler = (e: KeyboardEvent) => {
+      if (focusLevel === 'main') {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault()
+          setMenuFocusIdx(prev => prev < ROOT_COUNT - 1 ? prev + 1 : 0)
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault()
+          setMenuFocusIdx(prev => prev > 0 ? prev - 1 : ROOT_COUNT - 1)
+        } else if (e.key === 'ArrowRight') {
+          if (menuFocusIdx === MOVE_GROUP_IDX) {
+            e.preventDefault()
+            setSubmenuOpen(true)
+            setFocusLevel('sub')
+            setSubmenuFocusIdx(0)
+          }
+        } else if (e.key === 'Escape') {
+          e.preventDefault()
+          setMenuState(null)
+          setSubmenuOpen(false)
+        } else if (e.key === 'Enter') {
+          e.preventDefault()
+          // Trigger click on focused item — handled by the menu rendering
+          const btns = menuRef.current?.querySelectorAll(':scope > button')
+          if (btns && btns[menuFocusIdx]) (btns[menuFocusIdx] as HTMLButtonElement).click()
+        }
+      } else {
+        // sub level
+        if (e.key === 'ArrowDown') {
+          e.preventDefault()
+          setSubmenuFocusIdx(prev => prev < subCount - 1 ? prev + 1 : 0)
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault()
+          setSubmenuFocusIdx(prev => prev > 0 ? prev - 1 : subCount - 1)
+        } else if (e.key === 'ArrowLeft' || e.key === 'Escape') {
+          e.preventDefault()
+          setFocusLevel('main')
+          setSubmenuOpen(false)
+        } else if (e.key === 'Enter') {
+          e.preventDefault()
+          const btns = submenuRef.current?.querySelectorAll(':scope > button')
+          if (btns && btns[submenuFocusIdx]) (btns[submenuFocusIdx] as HTMLButtonElement).click()
+        }
+      }
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [menuState, menuFocusIdx, submenuFocusIdx, focusLevel, groups.length])
 
   // ── DnD sensors ────────────────────────────────────────────────────────────
 
@@ -645,6 +739,7 @@ function ShortcutsTabInner(): JSX.Element {
   const handleMoveToGroup = (entryId: string, targetGroupId: string | null) => {
     mutateLibrary(library.map((e) => e.id === entryId ? { ...e, groupId: targetGroupId ?? undefined } : e))
     setMenuState(null)
+    setSubmenuOpen(false)
   }
 
   const handleAddGroup = () => {
@@ -716,7 +811,11 @@ function ShortcutsTabInner(): JSX.Element {
 
   const handleMenuOpen = (e: React.MouseEvent, entryId: string) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
-    setMenuState({ entryId, x: rect.right, y: rect.bottom, xl: rect.left, mode: 'root' })
+    setMenuState({ entryId, x: rect.right, y: rect.bottom, xl: rect.left })
+    setMenuFocusIdx(-1)
+    setSubmenuOpen(false)
+    setSubmenuFocusIdx(-1)
+    setFocusLevel('main')
   }
 
   // ── DnD ─────────────────────────────────────────────────────────────────────
@@ -990,13 +1089,13 @@ function ShortcutsTabInner(): JSX.Element {
                       {viewMode === 'card' ? (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
                           {section.entries.map((entry) => (
-                            <SortableCardWrapper key={entry.id} entry={entry} viewMode="card" onMenuOpen={handleMenuOpen} />
+                            <SortableCardWrapper key={entry.id} entry={entry} viewMode="card" onMenuOpen={handleMenuOpen} resourceIcons={resourceIcons} />
                           ))}
                         </div>
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                           {section.entries.map((entry) => (
-                            <SortableCardWrapper key={entry.id} entry={entry} viewMode="list" onMenuOpen={handleMenuOpen} groupName={section.id === DEFAULT_GROUP_ID ? undefined : section.name} />
+                            <SortableCardWrapper key={entry.id} entry={entry} viewMode="list" onMenuOpen={handleMenuOpen} groupName={section.id === DEFAULT_GROUP_ID ? undefined : section.name} resourceIcons={resourceIcons} />
                           ))}
                         </div>
                       )}
@@ -1017,7 +1116,7 @@ function ShortcutsTabInner(): JSX.Element {
                       {displayList.map((entry) => {
                         const grp = entry.groupId ? groups.find((g) => g.id === entry.groupId) : null
                         return (
-                          <SortableCardWrapper key={entry.id} entry={entry} viewMode="card" onMenuOpen={handleMenuOpen} groupName={grp?.name} />
+                          <SortableCardWrapper key={entry.id} entry={entry} viewMode="card" onMenuOpen={handleMenuOpen} groupName={grp?.name} resourceIcons={resourceIcons} />
                         )
                       })}
                     </div>
@@ -1026,7 +1125,7 @@ function ShortcutsTabInner(): JSX.Element {
                       {displayList.map((entry) => {
                         const grp = entry.groupId ? groups.find((g) => g.id === entry.groupId) : null
                         return (
-                          <SortableCardWrapper key={entry.id} entry={entry} viewMode="list" onMenuOpen={handleMenuOpen} groupName={grp?.name} />
+                          <SortableCardWrapper key={entry.id} entry={entry} viewMode="list" onMenuOpen={handleMenuOpen} groupName={grp?.name} resourceIcons={resourceIcons} />
                         )
                       })}
                     </div>
@@ -1042,7 +1141,7 @@ function ShortcutsTabInner(): JSX.Element {
       <DragOverlay dropAnimation={null}>
         {draggingEntry && (
           <div style={{ opacity: 0.85, transform: 'rotate(1.5deg)', pointerEvents: 'none', width: viewMode === 'card' ? 200 : '100%' }}>
-            <ShortcutCard entry={draggingEntry} viewMode={viewMode} onMenuOpen={() => {}} />
+            <ShortcutCard entry={draggingEntry} viewMode={viewMode} onMenuOpen={() => {}} resourceIcons={resourceIcons} />
           </div>
         )}
       </DragOverlay>
@@ -1052,13 +1151,16 @@ function ShortcutsTabInner(): JSX.Element {
         const MENU_W = 168
         const openRight = menuState.x + MENU_W + 8 <= window.innerWidth
         const menuLeft = openRight ? menuState.x + 4 : menuState.xl - MENU_W - 4
+        const menuTop = Math.min(menuState.y + 4, window.innerHeight - 260)
+        const mainLeft = Math.max(8, menuLeft)
         return (
+        <>
         <div
           ref={menuRef}
           style={{
             position: 'fixed',
-            top: Math.min(menuState.y + 4, window.innerHeight - 260),
-            left: Math.max(8, menuLeft),
+            top: menuTop,
+            left: mainLeft,
             zIndex: 1000,
             background: 'var(--c-elevated)',
             border: '1px solid var(--c-border)',
@@ -1068,93 +1170,111 @@ function ShortcutsTabInner(): JSX.Element {
             boxShadow: '0 6px 24px rgba(0,0,0,0.4)',
           }}
         >
-          {menuState.mode === 'root' ? (
-            <>
-              <MenuItem onClick={() => { handleToggleFavorite(menuEntry.id); setMenuState(null) }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <UIIcon name="favorite" size={13} color={menuEntry.isFavorite ? '#f59e0b' : 'var(--c-text-dim)'} />
-                  {menuEntry.isFavorite ? t('lib.unfavorite') : t('lib.favorite')}
-                </span>
-              </MenuItem>
-              <MenuItem onClick={() => { openEditorForEntry(menuEntry); setMenuState(null) }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <UIIcon name="edit" size={13} />
-                  {t('lib.edit')}
-                </span>
-              </MenuItem>
-              <MenuSeparator />
-              <MenuItem
-                onClick={() => setMenuState((s) => s ? { ...s, mode: 'move-to-group' } : null)}
-                rightAdornment={<UIIcon name="play_arrow" size={10} />}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <UIIcon name="folder" size={13} />
-                  {t('lib.moveToGroup')}
-                </span>
-              </MenuItem>
-              <MenuItem onClick={() => { handleDuplicate(menuEntry.id); setMenuState(null) }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <UIIcon name="duplicate" size={13} />
-                  {t('lib.duplicate')}
-                </span>
-              </MenuItem>
-              <MenuSeparator />
-              <MenuItem danger onClick={() => { setDeleteTarget(menuEntry); setMenuState(null) }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <UIIcon name="delete" size={13} />
-                  {t('lib.delete')}
-                </span>
-              </MenuItem>
-            </>
-          ) : (
-            <>
-              <MenuItem muted onClick={() => setMenuState((s) => s ? { ...s, mode: 'root' } : null)}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <UIIcon name="back" size={13} />
-                  {t('lib.back')}
-                </span>
-              </MenuItem>
-              <MenuSeparator />
-              <MenuItem
-                onClick={() => handleMoveToGroup(menuEntry.id, null)}
-                rightAdornment={!menuEntry.groupId ? <UIIcon name="check" size={10} /> : undefined}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <UIIcon name="folder" size={13} />
-                  {t('lib.defaultGroup')}
-                </span>
-              </MenuItem>
-              {groups.map((g) => (
-                <MenuItem
-                  key={g.id}
-                  onClick={() => handleMoveToGroup(menuEntry.id, g.id)}
-                  rightAdornment={menuEntry.groupId === g.id ? <UIIcon name="check" size={10} /> : undefined}
-                >
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <UIIcon name="folder" size={13} />
-                    {g.name}
-                  </span>
-                </MenuItem>
-              ))}
-              <MenuSeparator />
-              <MenuItem
-                onClick={() => {
-                  const newGroup: ShortcutGroup = { id: generateId(), name: generateGroupName(groups) }
-                  mutateLibrary(
-                    library.map((e) => e.id === menuEntry.id ? { ...e, groupId: newGroup.id } : e),
-                    [...groups, newGroup],
-                  )
-                  setSelection(newGroup.id)
-                  setMenuState(null)
-                  setRenamingGroupId(newGroup.id)
-                  setRenamingGroupValue(newGroup.name)
-                }}
-              >
-                + {t('lib.createNewGroup')}
-              </MenuItem>
-            </>
-          )}
+          <MenuItem focused={menuFocusIdx === 0} onMouseEnterItem={() => { setMenuFocusIdx(0); setFocusLevel('main'); setSubmenuOpen(false) }} onClick={() => { handleToggleFavorite(menuEntry.id); setMenuState(null) }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <UIIcon name="favorite" size={13} color={menuEntry.isFavorite ? '#f59e0b' : 'var(--c-text-dim)'} />
+              {menuEntry.isFavorite ? t('lib.unfavorite') : t('lib.favorite')}
+            </span>
+          </MenuItem>
+          <MenuItem focused={menuFocusIdx === 1} onMouseEnterItem={() => { setMenuFocusIdx(1); setFocusLevel('main'); setSubmenuOpen(false) }} onClick={() => { openEditorForEntry(menuEntry); setMenuState(null) }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <UIIcon name="edit" size={13} />
+              {t('lib.edit')}
+            </span>
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem
+            focused={menuFocusIdx === 2 || submenuOpen}
+            onMouseEnterItem={() => { setMenuFocusIdx(2); setFocusLevel('main'); setSubmenuOpen(true) }}
+            onClick={() => setSubmenuOpen(prev => !prev)}
+            rightAdornment={<UIIcon name="play_arrow" size={10} />}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <UIIcon name="folder" size={13} />
+              {t('lib.moveToGroup')}
+            </span>
+          </MenuItem>
+          <MenuItem focused={menuFocusIdx === 3} onMouseEnterItem={() => { setMenuFocusIdx(3); setFocusLevel('main'); setSubmenuOpen(false) }} onClick={() => { handleDuplicate(menuEntry.id); setMenuState(null) }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <UIIcon name="duplicate" size={13} />
+              {t('lib.duplicate')}
+            </span>
+          </MenuItem>
+          <MenuSeparator />
+          <MenuItem danger focused={menuFocusIdx === 4} onMouseEnterItem={() => { setMenuFocusIdx(4); setFocusLevel('main'); setSubmenuOpen(false) }} onClick={() => { setDeleteTarget(menuEntry); setMenuState(null) }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <UIIcon name="delete" size={13} />
+              {t('lib.delete')}
+            </span>
+          </MenuItem>
         </div>
+
+        {/* Move-to-group submenu (opens to the right) */}
+        {submenuOpen && (
+          <div
+            ref={submenuRef}
+            style={{
+              position: 'fixed',
+              top: menuTop,
+              left: mainLeft + MENU_W + 4,
+              zIndex: 1001,
+              background: 'var(--c-elevated)',
+              border: '1px solid var(--c-border)',
+              borderRadius: 8,
+              padding: '4px 0',
+              minWidth: MENU_W,
+              boxShadow: '0 6px 24px rgba(0,0,0,0.4)',
+              maxHeight: 240,
+              overflowY: 'auto',
+            }}
+          >
+            <MenuItem
+              focused={focusLevel === 'sub' && submenuFocusIdx === 0}
+              onMouseEnterItem={() => { setSubmenuFocusIdx(0); setFocusLevel('sub') }}
+              onClick={() => handleMoveToGroup(menuEntry.id, null)}
+              rightAdornment={!menuEntry.groupId ? <UIIcon name="check" size={10} /> : undefined}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <UIIcon name="folder" size={13} />
+                {t('lib.defaultGroup')}
+              </span>
+            </MenuItem>
+            {groups.map((g, gi) => (
+              <MenuItem
+                key={g.id}
+                focused={focusLevel === 'sub' && submenuFocusIdx === gi + 1}
+                onMouseEnterItem={() => { setSubmenuFocusIdx(gi + 1); setFocusLevel('sub') }}
+                onClick={() => handleMoveToGroup(menuEntry.id, g.id)}
+                rightAdornment={menuEntry.groupId === g.id ? <UIIcon name="check" size={10} /> : undefined}
+              >
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <UIIcon name="folder" size={13} />
+                  {g.name}
+                </span>
+              </MenuItem>
+            ))}
+            <MenuSeparator />
+            <MenuItem
+              focused={focusLevel === 'sub' && submenuFocusIdx === groups.length + 1}
+              onMouseEnterItem={() => { setSubmenuFocusIdx(groups.length + 1); setFocusLevel('sub') }}
+              onClick={() => {
+                const newGroup: ShortcutGroup = { id: generateId(), name: generateGroupName(groups) }
+                mutateLibrary(
+                  library.map((e) => e.id === menuEntry.id ? { ...e, groupId: newGroup.id } : e),
+                  [...groups, newGroup],
+                )
+                setSelection(newGroup.id)
+                setMenuState(null)
+                setSubmenuOpen(false)
+                setRenamingGroupId(newGroup.id)
+                setRenamingGroupValue(newGroup.name)
+              }}
+            >
+              + {t('lib.createNewGroup')}
+            </MenuItem>
+          </div>
+        )}
+        </>
         )
       })()}
 

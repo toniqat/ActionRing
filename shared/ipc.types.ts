@@ -34,6 +34,7 @@ export const IPC_APPEARANCE_DATA_REFRESH = 'appearance:data-refresh'
 // Settings window controls (frame:false)
 export const IPC_WINDOW_MINIMIZE = 'window:minimize'
 export const IPC_WINDOW_MAXIMIZE = 'window:maximize'
+export const IPC_WINDOW_CLOSE = 'window:close'
 
 // Appearance editor panel sizes
 export const IPC_APPEARANCE_PANEL_SIZES = 'appearance:panel-sizes'
@@ -47,6 +48,31 @@ export const IPC_SHORTCUTS_DATA_REFRESH = 'shortcuts:data-refresh'
 export const IPC_SHORTCUTS_CLOSE        = 'shortcuts:close'
 export const IPC_SHORTCUTS_COMMITTED    = 'shortcuts:committed'
 export const IPC_SHORTCUTS_PLAY         = 'shortcuts:play'
+export const IPC_SHORTCUTS_THEME_UPDATE = 'shortcuts:theme-update'
+
+// ── Popup context menu ───────────────────────────────────────────────────────
+export const IPC_POPUP_MENU_SHOW         = 'popup-menu:show'
+export const IPC_POPUP_MENU_INIT         = 'popup-menu:init'
+export const IPC_POPUP_MENU_ITEM_CLICK   = 'popup-menu:item-click'
+export const IPC_POPUP_MENU_SHOW_SUBMENU = 'popup-menu:show-submenu'
+export const IPC_POPUP_MENU_CLOSE_SUBMENU = 'popup-menu:close-submenu'
+export const IPC_POPUP_MENU_RESIZE       = 'popup-menu:resize'
+export const IPC_POPUP_MENU_DISMISS      = 'popup-menu:dismiss'
+
+export interface PopupMenuItem {
+  id: string
+  label: string
+  icon?: string        // UIIcon name
+  iconColor?: string   // color for the icon
+  separator?: boolean  // renders a divider line instead of item
+  submenu?: PopupMenuItem[]
+}
+
+export interface PopupMenuShowRequest {
+  items: PopupMenuItem[]
+  screenX: number
+  screenY: number
+}
 
 // ── Progress overlay ─────────────────────────────────────────────────────────
 export const IPC_PROGRESS_UPDATE = 'progress:update'
@@ -69,6 +95,7 @@ export interface ProgressState {
 export const IPC_TRIGGER_START_MOUSE_CAPTURE  = 'trigger:start-mouse-capture'
 export const IPC_TRIGGER_CANCEL_MOUSE_CAPTURE = 'trigger:cancel-mouse-capture'
 export const IPC_TRIGGER_MOUSE_CAPTURED       = 'trigger:mouse-captured'
+
 
 export const IPC_RING_SHOW = 'ring:show'
 export const IPC_RING_HIDE = 'ring:hide'
@@ -181,21 +208,16 @@ export interface RunningProcess {
   iconDataUrl?: string
 }
 
-// ── Update check & install ────────────────────────────────────────────────────
+// ── Update check ─────────────────────────────────────────────────────────────
 export const IPC_UPDATE_CHECK    = 'update:check'
-export const IPC_UPDATE_DOWNLOAD = 'update:download'
-export const IPC_UPDATE_INSTALL  = 'update:install'
-export const IPC_UPDATE_STATUS   = 'update:status'
 export const IPC_SHELL_OPEN_EXTERNAL = 'shell:open-external'
 
-export type UpdateState = 'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'error'
+export type UpdateState = 'idle' | 'checking' | 'up-to-date' | 'available' | 'error'
 
 export interface UpdateStatus {
   state: UpdateState
   currentVersion?: string
   latestVersion?: string
-  downloadProgress?: number // 0–100
-  downloadedPath?: string
   error?: string
 }
 

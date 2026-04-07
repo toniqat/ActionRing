@@ -33,17 +33,19 @@ class PopupErrorBoundary extends Component<{ children: ReactNode; onError: () =>
   render(): ReactNode { return this.state.hasError ? null : this.props.children }
 }
 
-// ── Preset colors for the color picker ────────────────────────────────────────
+// ── Icon/Color picker constants (unified with EditShortcuts) ─────────────────
 const PRESET_BG_COLORS = [
   '#ef4444', '#f97316', '#eab308', '#22c55e',
   '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899',
 ]
-const POPUP_ICON_BTN = 26
-const POPUP_GRID_COLS = 7
+const PICKER_BTN = 36
+const PICKER_GAP = 6
+const PICKER_COLS = 5
 
 // ── SlotAppearancePopup ───────────────────────────────────────────────────────
 // Context-menu-style popup for inline icon and color editing.
 // Rendered via createPortal so it escapes overflow:hidden ancestors.
+// UI unified with EditShortcuts' IconColorPopover.
 
 function SlotAppearancePopup({
   slot,
@@ -56,7 +58,7 @@ function SlotAppearancePopup({
   onClose: () => void
   anchorEl: HTMLElement | null
 }): JSX.Element | null {
-  const [mode, setMode] = useState<'icon' | 'color'>('icon')
+  const [tab, setTab] = useState<'icon' | 'color'>('icon')
   const [search, setSearch] = useState('')
   const [resourceIcons, setResourceIcons] = useState<ResourceIconEntry[]>([])
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
@@ -65,6 +67,9 @@ function SlotAppearancePopup({
   const [customColor, setCustomColor] = useState(slot.bgColor ?? '#3a3f4b')
   const [recentColors, setRecentColors] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem('actionring-recent-bgcolors') ?? '[]') as string[] } catch { return [] }
+  })
+  const [recentIcons, setRecentIcons] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('actionring-recent-icons') ?? '[]') as string[] } catch { return [] }
   })
 
   const trackRecentColor = (color: string | undefined) => {
@@ -77,6 +82,15 @@ function SlotAppearancePopup({
     }
   }
 
+  const trackRecentIcon = (iconRef: string) => {
+    setRecentIcons((prev) => {
+      const next = [iconRef, ...prev.filter((r) => r !== iconRef)].slice(0, 20)
+      localStorage.setItem('actionring-recent-icons', JSON.stringify(next))
+      return next
+    })
+    window.settingsAPI?.addRecentIcon?.(iconRef)
+  }
+
   // Position and load resource icons when anchor is provided
   useEffect(() => {
     if (!anchorEl) return
@@ -86,6 +100,17 @@ function SlotAppearancePopup({
     } catch { /* anchorEl may have been unmounted */ }
     window.settingsAPI?.getResourceIcons?.().then(setResourceIcons).catch(() => {})
   }, [anchorEl])
+
+  // Clamp popup within viewport
+  useEffect(() => {
+    if (!popupRef.current || !pos) return
+    const el = popupRef.current
+    const rect = el.getBoundingClientRect()
+    let { top, left } = pos
+    if (rect.bottom > window.innerHeight) top = Math.max(4, window.innerHeight - rect.height - 4)
+    if (rect.right > window.innerWidth) left = Math.max(4, window.innerWidth - rect.width - 4)
+    if (top !== pos.top || left !== pos.left) setPos({ top, left })
+  }, [pos])
 
   // Click-outside to close (deferred so the opening click doesn't immediately close)
   useEffect(() => {
@@ -99,7 +124,7 @@ function SlotAppearancePopup({
     }
     const timer = setTimeout(() => {
       document.addEventListener('mousedown', handler)
-    }, 50)
+    }, 0)
     return () => {
       clearTimeout(timer)
       document.removeEventListener('mousedown', handler)
@@ -108,13 +133,23 @@ function SlotAppearancePopup({
 
   if (!pos) return null
 
-  const searchLower = search.trim().toLowerCase()
-  const filteredBuiltin = searchLower
-    ? BUILTIN_ICONS.filter((ic) => ic.label.toLowerCase().includes(searchLower))
+  const POPUP_WIDTH = 268
+  const PADDING = 12
+
+  const filteredBuiltin = search.trim()
+    ? BUILTIN_ICONS.filter((ic) => ic.label.toLowerCase().includes(search.toLowerCase()))
     : BUILTIN_ICONS
-  const filteredResource = searchLower
-    ? resourceIcons.filter((ic) => ic.name.toLowerCase().includes(searchLower))
+  const filteredResource = search.trim()
+    ? resourceIcons.filter((ic) => ic.name.toLowerCase().includes(search.toLowerCase()))
     : resourceIcons
+
+  // Resolve recent icons to their display data
+  const recentBuiltinIcons = recentIcons
+    .map((ref) => BUILTIN_ICONS.find((ic) => ic.name === ref))
+    .filter((ic): ic is NonNullable<typeof ic> => Boolean(ic))
+  const recentResourceIcons = recentIcons
+    .map((ref) => resourceIcons.find((e) => e.absPath === ref))
+    .filter((e): e is ResourceIconEntry => Boolean(e))
 
   return createPortal(
     <div
@@ -123,9 +158,8 @@ function SlotAppearancePopup({
         position: 'fixed',
         top: pos.top,
         left: pos.left,
-        zIndex: 9999,
-        width: 268,
-        maxHeight: 400,
+        width: POPUP_WIDTH,
+        maxHeight: '80vh',
         background: 'var(--c-surface)',
         border: '1px solid var(--c-border)',
         borderRadius: 12,
@@ -133,23 +167,24 @@ function SlotAppearancePopup({
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
+        zIndex: 9999,
         fontFamily: 'inherit',
         WebkitAppRegion: 'no-drag',
         pointerEvents: 'auto',
       } as React.CSSProperties}
     >
-      {/* Mode toggle: Icon | Color */}
-      <div style={{ display: 'flex', padding: '8px 10px 6px', flexShrink: 0, gap: 4, position: 'relative', zIndex: 1 }}>
+      {/* ── Tab bar: Icon | Color ── */}
+      <div style={{ display: 'flex', padding: '8px 10px 6px', flexShrink: 0, gap: 4 }}>
         {(['icon', 'color'] as const).map((m) => (
           <button
             key={m}
-            onClick={() => setMode(m)}
+            onClick={() => setTab(m)}
             style={{
               flex: 1, padding: '5px 0', borderRadius: 6,
-              border: mode === m ? '1px solid var(--c-accent-border)' : '1px solid transparent',
-              background: mode === m ? 'var(--c-accent-bg)' : 'var(--c-elevated)',
-              color: mode === m ? 'var(--c-accent)' : 'var(--c-text-muted)',
-              fontSize: 11, fontWeight: mode === m ? 600 : 400,
+              border: tab === m ? '1px solid var(--c-accent-border)' : '1px solid transparent',
+              background: tab === m ? 'var(--c-accent-bg)' : 'var(--c-elevated)',
+              color: tab === m ? 'var(--c-accent)' : 'var(--c-text-muted)',
+              fontSize: 11, fontWeight: tab === m ? 600 : 400,
               cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.12s',
             }}
           >
@@ -158,16 +193,16 @@ function SlotAppearancePopup({
         ))}
       </div>
 
-      {mode === 'color' ? (
-        /* ── Color picker with preset swatches ── */
-        <div style={{ padding: '4px 12px 12px', display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(5, 36px)`, gap: 6, justifyContent: 'center', marginBottom: 8 }}>
+      {tab === 'color' ? (
+        /* ── Color Section ── */
+        <div style={{ padding: `4px ${PADDING}px ${PADDING}px`, display: 'flex', flexDirection: 'column', gap: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${PICKER_COLS}, ${PICKER_BTN}px)`, gap: PICKER_GAP, justifyContent: 'center', marginBottom: 8 }}>
             {/* Auto/None swatch */}
             <button
-              onClick={() => { onUpdate({ ...slot, bgColor: undefined }) }}
+              onClick={() => onUpdate({ ...slot, bgColor: undefined })}
               title="Auto (theme default)"
               style={{
-                width: 36, height: 36, borderRadius: 8, cursor: 'pointer',
+                width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
                 border: `2px solid ${slot.bgColor === undefined ? 'var(--c-accent)' : 'var(--c-border)'}`,
                 background: 'var(--c-elevated)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -182,7 +217,7 @@ function SlotAppearancePopup({
                 onClick={() => { trackRecentColor(color); onUpdate({ ...slot, bgColor: color }) }}
                 title={color}
                 style={{
-                  width: 36, height: 36, borderRadius: 8, cursor: 'pointer',
+                  width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
                   border: '2px solid transparent',
                   outline: slot.bgColor === color ? `2px solid ${color}` : 'none',
                   outlineOffset: 2,
@@ -197,7 +232,7 @@ function SlotAppearancePopup({
               onClick={() => setCustomColorOpen((v) => !v)}
               title="Custom color…"
               style={{
-                width: 36, height: 36, borderRadius: 8, cursor: 'pointer',
+                width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
                 border: `2px solid ${customColorOpen ? 'var(--c-accent)' : 'transparent'}`,
                 background: 'conic-gradient(from 0deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #8b5cf6, #ec4899, #ef4444)',
                 padding: 0,
@@ -224,7 +259,7 @@ function SlotAppearancePopup({
                     }
                   }}
                   style={{
-                    flex: 1, background: 'var(--c-input-bg)',
+                    flex: 1, background: 'var(--c-surface)',
                     border: '1px solid var(--c-border)', borderRadius: 5,
                     color: 'var(--c-text)', padding: '4px 8px',
                     fontSize: 11, fontFamily: 'monospace', outline: 'none',
@@ -254,14 +289,14 @@ function SlotAppearancePopup({
               <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--c-text-dim)', fontWeight: 600, marginBottom: 6 }}>
                 Recent
               </div>
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {recentColors.slice(0, 10).map((color) => (
+              <div style={{ display: 'flex', gap: PICKER_GAP, flexWrap: 'wrap' }}>
+                {recentColors.slice(0, PICKER_COLS * 2).map((color) => (
                   <button
                     key={color}
                     onClick={() => onUpdate({ ...slot, bgColor: color })}
                     title={color}
                     style={{
-                      width: 36, height: 36, borderRadius: 8, cursor: 'pointer',
+                      width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
                       border: '2px solid transparent',
                       outline: slot.bgColor === color ? `2px solid ${color}` : 'none',
                       outlineOffset: 2,
@@ -275,68 +310,102 @@ function SlotAppearancePopup({
           )}
         </div>
       ) : (
-        /* ── Icon selection grid ── */
+        /* ── Icon Section ── */
         <>
-          <div style={{ padding: '0 10px 6px', flexShrink: 0 }}>
+          <div style={{ padding: `0 ${PADDING}px 6px`, flexShrink: 0 }}>
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search icons…"
               style={{
-                width: '100%', background: 'var(--c-input-bg)',
+                width: '100%', background: 'var(--c-surface)',
                 border: '1px solid var(--c-border)', borderRadius: 6,
                 color: 'var(--c-text)', padding: '4px 8px',
                 fontSize: 11, fontFamily: 'inherit', outline: 'none',
-                boxSizing: 'border-box',
+                boxSizing: 'border-box' as const,
               }}
             />
           </div>
-          <div
-            style={{
-              flex: 1, overflowY: 'auto', padding: '0 10px 10px',
-              display: 'grid',
-              gridTemplateColumns: `repeat(${POPUP_GRID_COLS}, ${POPUP_ICON_BTN}px)`,
-              gap: 4, alignContent: 'start', justifyContent: 'center',
-            }}
-          >
-            {filteredBuiltin.map((ic) => {
-              const selected = slot.icon === ic.name && !slot.iconIsCustom
-              return (
+
+          {/* Recently used icons */}
+          {!search.trim() && (recentBuiltinIcons.length > 0 || recentResourceIcons.length > 0) && (
+            <div style={{ padding: `0 ${PADDING}px 8px`, flexShrink: 0 }}>
+              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--c-text-dim)', fontWeight: 600, marginBottom: 6 }}>
+                Recent
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, ${PICKER_BTN}px)`, gap: PICKER_GAP, justifyContent: 'center' }}>
+                {recentBuiltinIcons.map((ic) => (
+                  <button
+                    key={`recent-b-${ic.name}`}
+                    onClick={() => { trackRecentIcon(ic.name); onUpdate({ ...slot, icon: ic.name, iconIsCustom: false }) }}
+                    title={ic.label}
+                    style={{
+                      width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
+                      border: `2px solid ${!slot.iconIsCustom && slot.icon === ic.name ? 'var(--c-accent)' : 'transparent'}`,
+                      background: !slot.iconIsCustom && slot.icon === ic.name ? 'var(--c-btn-active)' : 'var(--c-elevated)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: 'var(--c-text)', padding: 0,
+                    }}
+                  >
+                    <SVGIcon svgString={ic.svg} size={18} />
+                  </button>
+                ))}
+                {recentResourceIcons.map((entry) => (
+                  <button
+                    key={`recent-r-${entry.filename}`}
+                    onClick={() => { trackRecentIcon(entry.absPath); onUpdate({ ...slot, icon: entry.absPath, iconIsCustom: true }) }}
+                    title={entry.name}
+                    style={{
+                      width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
+                      border: `2px solid ${slot.iconIsCustom && slot.icon === entry.absPath ? 'var(--c-accent)' : 'transparent'}`,
+                      background: slot.iconIsCustom && slot.icon === entry.absPath ? 'var(--c-btn-active)' : 'var(--c-elevated)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      color: 'var(--c-text)', padding: 0,
+                    }}
+                  >
+                    <SVGIcon svgString={entry.svgContent} size={18} />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Scrollable icon grid */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: `0 ${PADDING}px ${PADDING}px` }}>
+            <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, ${PICKER_BTN}px)`, gap: PICKER_GAP, justifyContent: 'center' }}>
+              {filteredBuiltin.map((ic) => (
                 <button
                   key={ic.name}
-                  onClick={() => onUpdate({ ...slot, icon: ic.name, iconIsCustom: false })}
+                  onClick={() => { trackRecentIcon(ic.name); onUpdate({ ...slot, icon: ic.name, iconIsCustom: false }) }}
                   title={ic.label}
                   style={{
-                    width: POPUP_ICON_BTN, height: POPUP_ICON_BTN, borderRadius: 5, cursor: 'pointer', padding: 0,
-                    border: `2px solid ${selected ? 'var(--c-accent)' : 'transparent'}`,
-                    background: selected ? 'var(--c-btn-active)' : 'var(--c-elevated)',
+                    width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
+                    border: `2px solid ${!slot.iconIsCustom && slot.icon === ic.name ? 'var(--c-accent)' : 'transparent'}`,
+                    background: !slot.iconIsCustom && slot.icon === ic.name ? 'var(--c-btn-active)' : 'var(--c-elevated)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: 'var(--c-text)',
+                    color: 'var(--c-text)', padding: 0,
                   }}
                 >
-                  <SVGIcon svgString={ic.svg} size={14} />
+                  <SVGIcon svgString={ic.svg} size={18} />
                 </button>
-              )
-            })}
-            {filteredResource.map((entry) => {
-              const selected = slot.icon === entry.absPath && slot.iconIsCustom
-              return (
+              ))}
+              {filteredResource.map((entry) => (
                 <button
                   key={entry.filename}
-                  onClick={() => onUpdate({ ...slot, icon: entry.absPath, iconIsCustom: true })}
+                  onClick={() => { trackRecentIcon(entry.absPath); onUpdate({ ...slot, icon: entry.absPath, iconIsCustom: true }) }}
                   title={entry.name}
                   style={{
-                    width: POPUP_ICON_BTN, height: POPUP_ICON_BTN, borderRadius: 5, cursor: 'pointer', padding: 0,
-                    border: `2px solid ${selected ? 'var(--c-accent)' : 'transparent'}`,
-                    background: selected ? 'var(--c-btn-active)' : 'var(--c-elevated)',
+                    width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
+                    border: `2px solid ${slot.iconIsCustom && slot.icon === entry.absPath ? 'var(--c-accent)' : 'transparent'}`,
+                    background: slot.iconIsCustom && slot.icon === entry.absPath ? 'var(--c-btn-active)' : 'var(--c-elevated)',
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: 'var(--c-text)',
+                    color: 'var(--c-text)', padding: 0,
                   }}
                 >
-                  <SVGIcon svgString={entry.svgContent} size={14} />
+                  <SVGIcon svgString={entry.svgContent} size={18} />
                 </button>
-              )
-            })}
+              ))}
+            </div>
           </div>
         </>
       )}
@@ -369,11 +438,13 @@ function SortableShortcutCard({
   entry,
   onEdit,
   onDelete,
+  resourceIcons,
 }: {
   id: string
   entry: ShortcutEntry
   onEdit: () => void
   onDelete: () => void
+  resourceIcons: ResourceIconEntry[]
 }): JSX.Element {
   const {
     attributes, listeners, setNodeRef,
@@ -397,6 +468,7 @@ function SortableShortcutCard({
         isDragging={isDragging}
         dragAttributes={attributes as React.HTMLAttributes<HTMLDivElement>}
         dragListeners={listeners as React.HTMLAttributes<HTMLDivElement>}
+        resourceIcons={resourceIcons}
       />
     </div>
   )
@@ -517,6 +589,12 @@ export function SlotEditPanel({
   const assignedShortcuts: ShortcutEntry[] = (slot?.shortcutIds ?? [])
     .map((id) => library.find((e) => e.id === id))
     .filter((e): e is ShortcutEntry => Boolean(e))
+
+  // Load resource icons for inline SVG rendering in shortcut cards
+  const [resourceIcons, setResourceIcons] = useState<ResourceIconEntry[]>([])
+  useEffect(() => {
+    window.settingsAPI?.getResourceIcons?.().then(setResourceIcons).catch(() => {})
+  }, [])
 
   // Load SVG content for custom .svg icons (resource icons or user-uploaded SVGs)
   const [customSvgContent, setCustomSvgContent] = useState<string | null>(null)
@@ -826,6 +904,7 @@ export function SlotEditPanel({
                           entry={entry}
                           onEdit={() => openShortcutEditor(entry)}
                           onDelete={() => removeShortcut(i)}
+                          resourceIcons={resourceIcons}
                         />
                       </React.Fragment>
                     ))}

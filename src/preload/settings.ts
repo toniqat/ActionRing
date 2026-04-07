@@ -37,13 +37,11 @@ import {
   IPC_CONFIG_EXPORT_GLOBAL,
   IPC_CONFIG_IMPORT_GLOBAL,
   IPC_UPDATE_CHECK,
-  IPC_UPDATE_DOWNLOAD,
-  IPC_UPDATE_INSTALL,
-  IPC_UPDATE_STATUS,
   IPC_SHELL_OPEN_EXTERNAL,
   IPC_ICONS_READ_SVG,
   IPC_ICONS_GET_RESOURCE,
   IPC_ICONS_ADD_RECENT,
+  IPC_WINDOW_CLOSE,
   type UpdateStatus,
   type ResourceIconEntry,
 } from '@shared/ipc.types'
@@ -75,6 +73,7 @@ contextBridge.exposeInMainWorld('settingsAPI', {
 
   minimizeWindow: (): void => ipcRenderer.send(IPC_WINDOW_MINIMIZE),
   maximizeWindow: (): void => ipcRenderer.send(IPC_WINDOW_MAXIMIZE),
+  closeWindow: (): void => ipcRenderer.send(IPC_WINDOW_CLOSE),
 
   // ── App management ────────────────────────────────────────────────────────
   addApp: (exeName: string, displayName: string, iconDataUrl?: string): Promise<AppEntry> =>
@@ -141,13 +140,8 @@ contextBridge.exposeInMainWorld('settingsAPI', {
     ipcRenderer.send(IPC_TRIGGER_CANCEL_MOUSE_CAPTURE)
   },
 
-  // ── Update check & install ────────────────────────────────────────────────
+  // ── Update check ──────────────────────────────────────────────────────────
   checkForUpdates: (): Promise<UpdateStatus> => ipcRenderer.invoke(IPC_UPDATE_CHECK),
-  downloadUpdate: (): void => ipcRenderer.send(IPC_UPDATE_DOWNLOAD),
-  installUpdate: (): void => ipcRenderer.send(IPC_UPDATE_INSTALL),
-  onUpdateStatus: (cb: (status: UpdateStatus) => void): void => {
-    ipcRenderer.on(IPC_UPDATE_STATUS, (_event, status: UpdateStatus) => cb(status))
-  },
 
   // ── Shell utilities ───────────────────────────────────────────────────────
   openExternalUrl: (url: string): Promise<void> => ipcRenderer.invoke(IPC_SHELL_OPEN_EXTERNAL, url),

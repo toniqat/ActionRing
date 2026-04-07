@@ -38,8 +38,7 @@ export function registerShortcutsHandlers(
       existing.webContents.send(IPC_SHORTCUTS_DATA_REFRESH, pendingShortcutsData)
       existing.focus()
     } else {
-      const settingsWin = windowManager.getSettingsWindow()
-      windowManager.createShortcutsWindow(pendingShortcutsData.theme, settingsWin ?? undefined)
+      windowManager.createShortcutsWindow(pendingShortcutsData.theme)
     }
   })
 

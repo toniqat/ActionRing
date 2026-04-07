@@ -9,7 +9,7 @@ import type {
   Profile,
 } from '@shared/config.types'
 
-const CONFIG_VERSION = 11
+const CONFIG_VERSION = 13
 
 function generateId(): string {
   return Math.random().toString(36).slice(2, 10)
@@ -431,6 +431,117 @@ export class ConfigStore {
       // ── v10 → v11: additive only — new sequence action type, extended wait modes ──
       if ((parsed.version ?? 1) < 11) {
         config = { ...config, version: 11 }
+      }
+
+      // ── v11 → v12: split set-var into set-var (single), list, dict ──────────
+      if ((parsed.version ?? 1) < 12) {
+        const migrateActionV12 = (action: any): any => {
+          if (action.type === 'set-var') {
+            const dt = action.dataType ?? 'single'
+            if (dt === 'list') {
+              return {
+                type: 'list',
+                name: action.name,
+                ...(action.scope ? { scope: action.scope } : {}),
+                ...(action.mode ? { mode: action.mode } : {}),
+                ...(action.operation ? { operation: action.operation } : {}),
+                ...(action.value ? { value: action.value } : {}),
+                ...(action.key ? { key: action.key } : {}),
+                ...(action.resultVar ? { resultVar: action.resultVar } : {}),
+                ...(action.listItems ? { listItems: action.listItems } : {}),
+              }
+            }
+            if (dt === 'dict') {
+              return {
+                type: 'dict',
+                name: action.name,
+                ...(action.scope ? { scope: action.scope } : {}),
+                ...(action.mode ? { mode: action.mode } : {}),
+                ...(action.operation ? { operation: action.operation } : {}),
+                ...(action.value ? { value: action.value } : {}),
+                ...(action.key ? { key: action.key } : {}),
+                ...(action.resultVar ? { resultVar: action.resultVar } : {}),
+                ...(action.dictItems ? { dictItems: action.dictItems } : {}),
+              }
+            }
+            // single: strip list/dict fields
+            return { type: 'set-var', name: action.name, value: action.value ?? '', ...(action.scope ? { scope: action.scope } : {}) }
+          }
+          if (action.type === 'if-else') {
+            action = {
+              ...action,
+              thenActions: (action.thenActions ?? []).map(migrateActionV12),
+              elseActions: (action.elseActions ?? []).map(migrateActionV12),
+              ...(action.switchCases ? { switchCases: action.switchCases.map((c: any) => ({ ...c, actions: (c.actions ?? []).map(migrateActionV12) })) } : {}),
+              ...(action.switchDefault ? { switchDefault: action.switchDefault.map(migrateActionV12) } : {}),
+            }
+          }
+          if (action.type === 'loop') {
+            action = { ...action, body: (action.body ?? []).map(migrateActionV12) }
+          }
+          if (action.type === 'sequence') {
+            action = { ...action, body: (action.body ?? []).map(migrateActionV12) }
+          }
+          return action
+        }
+
+        const library = (config.shortcutsLibrary ?? []).map((entry: any) => ({
+          ...entry,
+          actions: entry.actions.map(migrateActionV12),
+        }))
+
+        const migrateSlotV12 = (slot: any): any => ({
+          ...slot,
+          actions: (slot.actions ?? []).map(migrateActionV12),
+          subSlots: slot.subSlots ? slot.subSlots.map(migrateSlotV12) : undefined,
+        })
+
+        const migratedApps = config.apps.map((appEntry: any) => ({
+          ...appEntry,
+          profiles: appEntry.profiles.map((profile: any) => ({
+            ...profile,
+            slots: profile.slots.map(migrateSlotV12),
+          })),
+        }))
+
+        config = { ...config, version: 12, apps: migratedApps, shortcutsLibrary: library }
+      }
+
+      // ── v12 → v13: rename 'shortcut' action type to 'keyboard' ─────────────
+      if ((parsed.version ?? 1) < 13) {
+        const migrateActionV13 = (action: any): any => {
+          if (action.type === 'shortcut') return { ...action, type: 'keyboard' }
+          if (action.type === 'if-else') {
+            return {
+              ...action,
+              thenActions: (action.thenActions ?? []).map(migrateActionV13),
+              elseActions: (action.elseActions ?? []).map(migrateActionV13),
+              ...(action.switchCases ? { switchCases: action.switchCases.map((c: any) => ({ ...c, actions: (c.actions ?? []).map(migrateActionV13) })) } : {}),
+              ...(action.switchDefault ? { switchDefault: action.switchDefault.map(migrateActionV13) } : {}),
+            }
+          }
+          if (action.type === 'loop' || action.type === 'sequence') {
+            return { ...action, body: (action.body ?? []).map(migrateActionV13) }
+          }
+          return action
+        }
+        const library = (config.shortcutsLibrary ?? []).map((entry: any) => ({
+          ...entry,
+          actions: entry.actions.map(migrateActionV13),
+        }))
+        const migrateSlotV13 = (slot: any): any => ({
+          ...slot,
+          actions: (slot.actions ?? []).map(migrateActionV13),
+          subSlots: slot.subSlots ? slot.subSlots.map(migrateSlotV13) : undefined,
+        })
+        const migratedApps = config.apps.map((appEntry: any) => ({
+          ...appEntry,
+          profiles: appEntry.profiles.map((profile: any) => ({
+            ...profile,
+            slots: profile.slots.map(migrateSlotV13),
+          })),
+        }))
+        config = { ...config, version: 13, apps: migratedApps, shortcutsLibrary: library }
       }
 
       // ── Backfill missing icons on library entries ──────────────────────────

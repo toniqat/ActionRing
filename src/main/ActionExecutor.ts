@@ -1,8 +1,10 @@
 import { exec, spawn } from 'child_process'
+import path from 'path'
 import { shell, Notification } from 'electron'
-import type { ActionConfig, SystemActionId, ConditionCriteria, ConditionOperator, ShortcutEntry, CalcOperation, RunShortcutAction, SequenceAction } from '@shared/config.types'
+import type { ActionConfig, SystemActionId, ConditionCriteria, ConditionOperator, ShortcutEntry, CalcOperation, RunShortcutAction, SequenceAction, ListAction, DictAction } from '@shared/config.types'
 import type { PlayNodeResult } from '@shared/ipc.types'
 import type { ConfigStore } from './ConfigStore'
+import type { HookManager } from './HookManager'
 import type { SequenceManager } from './SequenceManager'
 
 // ── Interruption signals ───────────────────────────────────────────────────────
@@ -71,11 +73,16 @@ function evalCondition(expr: string, ctx: RunContext): boolean {
 
 export class ActionExecutor {
   private sequenceManager: SequenceManager | null = null
+  private hookManager: HookManager | null = null
 
   constructor(private configStore: ConfigStore) {}
 
   setSequenceManager(mgr: SequenceManager): void {
     this.sequenceManager = mgr
+  }
+
+  setHookManager(mgr: HookManager): void {
+    this.hookManager = mgr
   }
 
   private makeContext(): RunContext {
@@ -149,7 +156,7 @@ export class ActionExecutor {
         }
         break
       }
-      case 'shortcut':
+      case 'keyboard':
         await this.sendShortcut(action.keys)
         break
       case 'shell':
@@ -158,45 +165,74 @@ export class ActionExecutor {
       case 'system':
         await this.runSystem(action.action)
         break
+      case 'link': {
+        const resolvedUrl = interpolate(action.url, runCtx)
+        await shell.openExternal(resolvedUrl)
+        break
+      }
       case 'folder':
         break
 
       // ── Script nodes ──────────────────────────────────────────────────────────
 
       case 'if-else': {
-        let result: boolean
-        if (action.criteria && action.criteria.length > 0) {
-          const evalCriteria = (c: ConditionCriteria): boolean => {
-            const lhs = interpolate(c.variable, runCtx)
-            if (c.operator === 'is-empty')     return lhs === '' || lhs === c.variable
-            if (c.operator === 'is-not-empty') return lhs !== '' && lhs !== c.variable
-            const rhs = interpolate(c.value, runCtx)
-            const lNum = Number(lhs)
-            const rNum = Number(rhs)
-            const num  = !isNaN(lNum) && !isNaN(rNum)
-            const op   = c.operator as ConditionOperator
-            switch (op) {
-              case 'eq':          return lhs === rhs
-              case 'neq':         return lhs !== rhs
-              case 'contains':    return lhs.includes(rhs)
-              case 'not-contains':return !lhs.includes(rhs)
-              case 'gt':          return num && lNum > rNum
-              case 'lt':          return num && lNum < rNum
-              case 'gte':         return num && lNum >= rNum
-              case 'lte':         return num && lNum <= rNum
-              default:            return false
+        const mode = action.conditionMode ?? 'if-else'
+
+        if (mode === 'switch') {
+          // Switch mode: evaluate switchValue and match against cases
+          const switchVal = interpolate(action.switchValue ?? '', runCtx)
+          let matched = false
+          for (const sc of action.switchCases ?? []) {
+            const caseVal = interpolate(sc.value, runCtx)
+            if (switchVal === caseVal) {
+              matched = true
+              for (const sub of sc.actions) {
+                await this.execute(sub, runCtx)
+              }
+              break // first match only (break behavior)
             }
           }
-          const evals = action.criteria.map(evalCriteria)
-          result = (action.matchLogic ?? 'all') === 'all'
-            ? evals.every(Boolean)
-            : evals.some(Boolean)
+          if (!matched && action.switchDefault) {
+            for (const sub of action.switchDefault) {
+              await this.execute(sub, runCtx)
+            }
+          }
         } else {
-          result = evalCondition(action.condition, runCtx)
-        }
-        const branch = result ? action.thenActions : action.elseActions
-        for (const sub of branch) {
-          await this.execute(sub, runCtx)
+          // If-Else mode (original behavior)
+          let result: boolean
+          if (action.criteria && action.criteria.length > 0) {
+            const evalCriteria = (c: ConditionCriteria): boolean => {
+              const lhs = interpolate(c.variable, runCtx)
+              if (c.operator === 'is-empty')     return lhs === '' || lhs === c.variable
+              if (c.operator === 'is-not-empty') return lhs !== '' && lhs !== c.variable
+              const rhs = interpolate(c.value, runCtx)
+              const lNum = Number(lhs)
+              const rNum = Number(rhs)
+              const num  = !isNaN(lNum) && !isNaN(rNum)
+              const op   = c.operator as ConditionOperator
+              switch (op) {
+                case 'eq':          return lhs === rhs
+                case 'neq':         return lhs !== rhs
+                case 'contains':    return lhs.includes(rhs)
+                case 'not-contains':return !lhs.includes(rhs)
+                case 'gt':          return num && lNum > rNum
+                case 'lt':          return num && lNum < rNum
+                case 'gte':         return num && lNum >= rNum
+                case 'lte':         return num && lNum <= rNum
+                default:            return false
+              }
+            }
+            const evals = action.criteria.map(evalCriteria)
+            result = (action.matchLogic ?? 'all') === 'all'
+              ? evals.every(Boolean)
+              : evals.some(Boolean)
+          } else {
+            result = evalCondition(action.condition, runCtx)
+          }
+          const branch = result ? action.thenActions : action.elseActions
+          for (const sub of branch) {
+            await this.execute(sub, runCtx)
+          }
         }
         break
       }
@@ -216,6 +252,7 @@ export class ActionExecutor {
             for (let i = start; safeStep > 0 ? i < end : i > end; i += safeStep) {
               if (++iterations > limit) break
               runCtx.localVars[iterVar] = String(i)
+              runCtx.localVars['__loop_i'] = String(i)
               for (const sub of action.body) {
                 await this.execute(sub, runCtx)
               }
@@ -226,13 +263,35 @@ export class ActionExecutor {
         } else if (mode === 'foreach') {
           const listVarName = action.listVar ?? ''
           const itemVar     = action.itemVar ?? '_item'
+          const keyVar      = action.keyVar
           const raw = runCtx.localVars[listVarName] ?? '[]'
-          let items: unknown[] = []
-          try { items = JSON.parse(raw) } catch { /* not valid JSON — iterate as single string */ items = [raw] }
-          if (!Array.isArray(items)) items = [raw]
+          let parsed: unknown
+          try { parsed = JSON.parse(raw) } catch { parsed = raw }
+
           try {
-            for (const item of items) {
-              runCtx.localVars[itemVar] = typeof item === 'string' ? item : JSON.stringify(item)
+            if (Array.isArray(parsed)) {
+              // List iteration
+              for (let idx = 0; idx < parsed.length; idx++) {
+                const item = parsed[idx]
+                runCtx.localVars[itemVar] = typeof item === 'string' ? item : JSON.stringify(item)
+                if (keyVar) runCtx.localVars[keyVar] = String(idx)
+                for (const sub of action.body) {
+                  await this.execute(sub, runCtx)
+                }
+              }
+            } else if (typeof parsed === 'object' && parsed !== null) {
+              // Dictionary iteration
+              for (const [k, v] of Object.entries(parsed)) {
+                if (keyVar) runCtx.localVars[keyVar] = k
+                runCtx.localVars[itemVar] = typeof v === 'string' ? v : JSON.stringify(v)
+                for (const sub of action.body) {
+                  await this.execute(sub, runCtx)
+                }
+              }
+            } else {
+              // Single value fallback
+              runCtx.localVars[itemVar] = String(raw)
+              if (keyVar) runCtx.localVars[keyVar] = '0'
               for (const sub of action.body) {
                 await this.execute(sub, runCtx)
               }
@@ -245,6 +304,7 @@ export class ActionExecutor {
           const count = Math.min(Math.max(1, action.count), 1000)
           try {
             for (let i = 0; i < count; i++) {
+              runCtx.localVars['__loop_count'] = String(i + 1)
               for (const sub of action.body) {
                 await this.execute(sub, runCtx)
               }
@@ -307,6 +367,11 @@ export class ActionExecutor {
           if (pid != null) {
             await this.waitForPidExit(pid)
           }
+        } else if (waitMode === 'key-input') {
+          const keys = interpolate(action.waitKeys ?? '', runCtx)
+          if (keys && this.hookManager) {
+            await this.hookManager.waitForKeyInput(keys)
+          }
         } else {
           await new Promise<void>((resolve) => setTimeout(resolve, action.ms))
         }
@@ -314,62 +379,98 @@ export class ActionExecutor {
       }
 
       case 'set-var': {
-        const op       = action.operation ?? 'set'
-        const dataType = action.dataType  ?? 'string'
-        const varName  = action.name
+        const value = interpolate(action.value, runCtx)
+        runCtx.localVars[action.name.replace(/^\$/, '')] = value
+        break
+      }
 
-        if (dataType === 'string' || op === 'set') {
-          const value = interpolate(action.value, runCtx)
-          runCtx.localVars[varName] = value
+      case 'list': {
+        const a = action as ListAction
+        const varName = a.name
+        const varMode = a.mode ?? 'define'
+        const op = a.operation ?? 'set'
+
+        if (varMode === 'define') {
+          const items = (a.listItems ?? []).map((v) => interpolate(v, runCtx))
+          runCtx.localVars[varName] = JSON.stringify(items)
           break
         }
 
-        // ── List / Dict operations ──────────────────────────────────────────────
-        const readVar = (n: string): string => runCtx.localVars[n] ?? ''
-        const writeVar = (n: string, val: string): void => { runCtx.localVars[n] = val }
+        // Edit mode
+        if (op === 'set') {
+          runCtx.localVars[varName] = interpolate(a.value ?? '', runCtx)
+          break
+        }
 
-        const raw = readVar(varName)
+        const raw = runCtx.localVars[varName] ?? '[]'
         let parsed: unknown
-        try { parsed = JSON.parse(raw) } catch { parsed = dataType === 'list' ? [] : {} }
+        try { parsed = JSON.parse(raw) } catch { parsed = [] }
+        const arr: unknown[] = Array.isArray(parsed) ? parsed : []
 
-        if (dataType === 'list') {
-          const arr: unknown[] = Array.isArray(parsed) ? parsed : []
-          if (op === 'push') {
-            arr.push(interpolate(action.value, runCtx))
-            writeVar(varName, JSON.stringify(arr))
-          } else if (op === 'remove') {
-            const idx = parseInt(interpolate(action.key ?? '0', runCtx), 10)
-            if (!isNaN(idx)) arr.splice(idx, 1)
-            writeVar(varName, JSON.stringify(arr))
-          } else if (op === 'get') {
-            const idx = parseInt(interpolate(action.key ?? '0', runCtx), 10)
-            const item = !isNaN(idx) ? arr[idx] : undefined
-            const result = item !== undefined
-              ? (typeof item === 'string' ? item : JSON.stringify(item))
-              : ''
-            if (action.resultVar) writeVar(action.resultVar, result)
+        if (op === 'push') {
+          arr.push(interpolate(a.value ?? '', runCtx))
+          runCtx.localVars[varName] = JSON.stringify(arr)
+        } else if (op === 'remove') {
+          const idx = parseInt(interpolate(a.key ?? '0', runCtx), 10)
+          if (!isNaN(idx)) arr.splice(idx, 1)
+          runCtx.localVars[varName] = JSON.stringify(arr)
+        } else if (op === 'get') {
+          const idx = parseInt(interpolate(a.key ?? '0', runCtx), 10)
+          const item = !isNaN(idx) ? arr[idx] : undefined
+          const result = item !== undefined
+            ? (typeof item === 'string' ? item : JSON.stringify(item))
+            : ''
+          if (a.resultVar) runCtx.localVars[a.resultVar] = result
+        }
+        break
+      }
+
+      case 'dict': {
+        const a = action as DictAction
+        const varName = a.name
+        const varMode = a.mode ?? 'define'
+        const op = a.operation ?? 'set'
+
+        if (varMode === 'define') {
+          const dict: Record<string, string> = {}
+          for (const entry of a.dictItems ?? []) {
+            const key = interpolate(entry.key, runCtx)
+            if (key) dict[key] = interpolate(entry.value, runCtx)
           }
-        } else if (dataType === 'dict') {
-          const dict: Record<string, unknown> = (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
-            ? (parsed as Record<string, unknown>)
-            : {}
-          if (op === 'push') {
-            // For dict, 'push' means set a key/value pair
-            const key = interpolate(action.key ?? '', runCtx)
-            if (key) dict[key] = interpolate(action.value, runCtx)
-            writeVar(varName, JSON.stringify(dict))
-          } else if (op === 'remove') {
-            const key = interpolate(action.key ?? '', runCtx)
-            if (key) delete dict[key]
-            writeVar(varName, JSON.stringify(dict))
-          } else if (op === 'get') {
-            const key   = interpolate(action.key ?? '', runCtx)
-            const item  = key ? dict[key] : undefined
-            const result = item !== undefined
-              ? (typeof item === 'string' ? item : JSON.stringify(item))
-              : ''
-            if (action.resultVar) writeVar(action.resultVar, result)
+          runCtx.localVars[varName] = JSON.stringify(dict)
+          break
+        }
+
+        // Edit mode
+        if (op === 'set') {
+          const key = interpolate(a.key ?? '', runCtx)
+          if (key) {
+            const rawD = runCtx.localVars[varName] ?? '{}'
+            let parsedD: Record<string, unknown>
+            try { parsedD = JSON.parse(rawD) } catch { parsedD = {} }
+            if (typeof parsedD !== 'object' || Array.isArray(parsedD)) parsedD = {}
+            parsedD[key] = interpolate(a.value ?? '', runCtx)
+            runCtx.localVars[varName] = JSON.stringify(parsedD)
           }
+          break
+        }
+
+        const rawDict = runCtx.localVars[varName] ?? '{}'
+        let dict: Record<string, unknown>
+        try { dict = JSON.parse(rawDict) } catch { dict = {} }
+        if (typeof dict !== 'object' || Array.isArray(dict)) dict = {}
+
+        if (op === 'remove') {
+          const key = interpolate(a.key ?? '', runCtx)
+          if (key) delete dict[key]
+          runCtx.localVars[varName] = JSON.stringify(dict)
+        } else if (op === 'get') {
+          const key = interpolate(a.key ?? '', runCtx)
+          const item = key ? dict[key] : undefined
+          const result = item !== undefined
+            ? (typeof item === 'string' ? item : JSON.stringify(item))
+            : ''
+          if (a.resultVar) runCtx.localVars[a.resultVar] = result
         }
         break
       }
@@ -461,6 +562,20 @@ export class ActionExecutor {
       case 'comment':
         // No-op — documentation only
         break
+
+      // ── Mouse actions ───────────────────────────────────────────────────────────
+
+      case 'mouse-move': {
+        const mode = action.mode ?? 'set'
+        const x = parseInt(interpolate(action.x, runCtx), 10) || 0
+        const y = parseInt(interpolate(action.y, runCtx), 10) || 0
+        await this.moveMouse(mode, x, y)
+        break
+      }
+
+      case 'mouse-click':
+        await this.mouseClick(action.button ?? 'left')
+        break
     }
   }
 
@@ -470,6 +585,7 @@ export class ActionExecutor {
         detached: true,
         stdio: 'ignore',
         shell: true,
+        cwd: path.dirname(target),
       })
       child.unref()
       return child.pid ?? null
@@ -583,5 +699,49 @@ export class ActionExecutor {
 
   private toAppleScriptKeys(keys: string): string {
     return keys.split('+').pop()?.toLowerCase() || keys
+  }
+
+  // ── Mouse simulation ────────────────────────────────────────────────────────
+
+  private async moveMouse(mode: string, x: number, y: number): Promise<void> {
+    if (process.platform === 'win32') {
+      if (mode === 'set') {
+        exec(`powershell -Command "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point(${x}, ${y})"`)
+      } else {
+        exec(`powershell -Command "Add-Type -AssemblyName System.Windows.Forms; $p = [System.Windows.Forms.Cursor]::Position; [System.Windows.Forms.Cursor]::Position = New-Object System.Drawing.Point($($p.X + ${x}), $($p.Y + ${y}))"`)
+      }
+    } else if (process.platform === 'darwin') {
+      if (mode === 'set') {
+        exec(`osascript -e 'do shell script "cliclick m:${x},${y}" 2>/dev/null || true'`)
+      } else {
+        exec(`osascript -e 'do shell script "cliclick m:+${x},+${y}" 2>/dev/null || true'`)
+      }
+    }
+  }
+
+  private async mouseClick(button: string): Promise<void> {
+    if (process.platform === 'win32') {
+      const PS_MOUSE_TYPE = `Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, int dx, int dy, int dwData, IntPtr dwExtraInfo);' -Name Win32Mouse -Namespace API -ErrorAction SilentlyContinue`
+      const flagMap: Record<string, [number, number]> = {
+        left:   [0x0002, 0x0004],
+        right:  [0x0008, 0x0010],
+        middle: [0x0020, 0x0040],
+      }
+      if (button === 'wheel-up' || button === 'wheel-down') {
+        const amount = button === 'wheel-up' ? 120 : -120
+        exec(`powershell -Command "${PS_MOUSE_TYPE}; [API.Win32Mouse]::mouse_event(0x0800, 0, 0, ${amount}, [IntPtr]::Zero)"`)
+      } else if (button === 'side1' || button === 'side2') {
+        const xBtn = button === 'side1' ? 1 : 2
+        exec(`powershell -Command "${PS_MOUSE_TYPE}; [API.Win32Mouse]::mouse_event(0x0080, 0, 0, ${xBtn}, [IntPtr]::Zero); [API.Win32Mouse]::mouse_event(0x0100, 0, 0, ${xBtn}, [IntPtr]::Zero)"`)
+      } else {
+        const [down, up] = flagMap[button] ?? flagMap.left
+        exec(`powershell -Command "${PS_MOUSE_TYPE}; [API.Win32Mouse]::mouse_event(${down}, 0, 0, 0, [IntPtr]::Zero); [API.Win32Mouse]::mouse_event(${up}, 0, 0, 0, [IntPtr]::Zero)"`)
+      }
+    } else if (process.platform === 'darwin') {
+      const clickMap: Record<string, string> = {
+        left: 'c:.', right: 'rc:.', middle: 'mc:.',
+      }
+      exec(`cliclick ${clickMap[button] ?? clickMap.left} 2>/dev/null || true`)
+    }
   }
 }

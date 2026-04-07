@@ -21,6 +21,7 @@ import {
   IPC_TRIGGER_MOUSE_CAPTURED,
 } from '@shared/ipc.types'
 import { IconStore } from './IconStore'
+import { PopupMenuManager } from './PopupMenuManager'
 import { WindowTracker } from './WindowTracker'
 import { getNotificationStrings } from '@shared/mainI18n'
 
@@ -61,6 +62,7 @@ async function main(): Promise<void> {
   const actionExecutor = new ActionExecutor(configStore)
   const loginStartup = new LoginStartup()
   const windowTracker = new WindowTracker()
+  const _popupMenuManager = new PopupMenuManager()
 
   // Wire up parallel sequence manager
   const sequenceManager = new SequenceManager(
@@ -83,7 +85,7 @@ async function main(): Promise<void> {
   registerProfileHandlers(configStore, windowManager)
   registerProcessHandlers(configStore, windowManager)
   registerShortcutsHandlers(windowManager, configStore, actionExecutor)
-  registerUpdateHandlers(windowManager)
+  registerUpdateHandlers()
 
   // Create system tray
   const trayManager = new TrayManager(configStore, () => {
@@ -115,6 +117,7 @@ async function main(): Promise<void> {
 
   // Start global mouse/keyboard hook
   const hookManager = new HookManager(configStore, windowTracker, () => windowManager.getRingWindow())
+  actionExecutor.setHookManager(hookManager)
   await hookManager.start()
 
   // Trigger mouse capture — lets the settings UI capture any mouse button via uiohook
