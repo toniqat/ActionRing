@@ -2,6 +2,7 @@ import { ipcMain, app, shell, type IpcMainInvokeEvent } from 'electron'
 import * as https from 'https'
 import * as http from 'http'
 import {
+  IPC_APP_GET_VERSION,
   IPC_UPDATE_CHECK,
   IPC_SHELL_OPEN_EXTERNAL,
   type UpdateStatus,
@@ -9,7 +10,6 @@ import {
 
 const GITHUB_OWNER = 'toniqat'
 const GITHUB_REPO  = 'ActionRing'
-const GITHUB_PAT   = process.env.GITHUB_PAT ?? ''
 const CACHE_TTL_MS = 5 * 60 * 1000 // 5 minutes
 
 interface CachedRelease {
@@ -66,7 +66,7 @@ function httpsGet(url: string, headers: Record<string, string>): Promise<string>
 
 // ── GitHub API ────────────────────────────────────────────────────────────────
 
-async function fetchLatestRelease(): Promise<CachedRelease> {
+async function fetchLatestRelease(): Promise<CachedRelease | null> {
   const now = Date.now()
   if (cache && now - cache.checkedAt < CACHE_TTL_MS) return cache
 
@@ -75,7 +75,6 @@ async function fetchLatestRelease(): Promise<CachedRelease> {
     'User-Agent': 'ActionRing-App',
     'Accept': 'application/vnd.github+json',
   }
-  if (GITHUB_PAT) headers['Authorization'] = `Bearer ${GITHUB_PAT}`
 
   const body = await httpsGet(apiUrl, headers)
   const release = JSON.parse(body) as {
@@ -84,7 +83,7 @@ async function fetchLatestRelease(): Promise<CachedRelease> {
   }
 
   if (!release.tag_name) {
-    throw new Error(release.message ?? 'No releases found on GitHub.')
+    return null
   }
 
   cache = { tag: release.tag_name, checkedAt: Date.now() }
@@ -94,10 +93,15 @@ async function fetchLatestRelease(): Promise<CachedRelease> {
 // ── IPC handler registration ──────────────────────────────────────────────────
 
 export function registerUpdateHandlers(): void {
+  ipcMain.handle(IPC_APP_GET_VERSION, (): string => app.getVersion())
+
   ipcMain.handle(IPC_UPDATE_CHECK, async (): Promise<UpdateStatus> => {
     const currentVersion = app.getVersion()
     try {
       const release = await fetchLatestRelease()
+      if (!release) {
+        return { state: 'up-to-date', currentVersion, latestVersion: currentVersion }
+      }
       if (isNewer(release.tag, currentVersion)) {
         return { state: 'available', currentVersion, latestVersion: release.tag }
       }

@@ -209,7 +209,8 @@ export interface RunningProcess {
 }
 
 // ── Update check ─────────────────────────────────────────────────────────────
-export const IPC_UPDATE_CHECK    = 'update:check'
+export const IPC_APP_GET_VERSION     = 'app:get-version'
+export const IPC_UPDATE_CHECK        = 'update:check'
 export const IPC_SHELL_OPEN_EXTERNAL = 'shell:open-external'
 
 export type UpdateState = 'idle' | 'checking' | 'up-to-date' | 'available' | 'error'

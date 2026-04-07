@@ -36,6 +36,7 @@ import {
   IPC_CONFIG_RESET,
   IPC_CONFIG_EXPORT_GLOBAL,
   IPC_CONFIG_IMPORT_GLOBAL,
+  IPC_APP_GET_VERSION,
   IPC_UPDATE_CHECK,
   IPC_SHELL_OPEN_EXTERNAL,
   IPC_ICONS_READ_SVG,
@@ -141,6 +142,7 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   },
 
   // ── Update check ──────────────────────────────────────────────────────────
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke(IPC_APP_GET_VERSION),
   checkForUpdates: (): Promise<UpdateStatus> => ipcRenderer.invoke(IPC_UPDATE_CHECK),
 
   // ── Shell utilities ───────────────────────────────────────────────────────

@@ -57,6 +57,7 @@ declare global {
       exportAllData: () => Promise<boolean>
       importAllData: () => Promise<boolean>
       // Update check
+      getAppVersion: () => Promise<string>
       checkForUpdates: () => Promise<UpdateStatus>
       // Shell utilities
       openExternalUrl: (url: string) => Promise<void>

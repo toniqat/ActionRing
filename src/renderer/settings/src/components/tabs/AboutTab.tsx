@@ -44,9 +44,7 @@ export function AboutTab(): JSX.Element {
   const [status, setStatus] = useState<UpdateStatus>({ state: 'idle' })
 
   useEffect(() => {
-    window.settingsAPI.checkForUpdates().then((s) => {
-      if (s.currentVersion) setCurrentVersion(s.currentVersion)
-    }).catch(() => {})
+    window.settingsAPI.getAppVersion().then(setCurrentVersion).catch(() => {})
   }, [])
 
   const handleCheckLatest = (): void => {
