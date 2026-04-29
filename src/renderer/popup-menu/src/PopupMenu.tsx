@@ -49,6 +49,13 @@ export function PopupMenu(): JSX.Element | null {
     return () => document.removeEventListener('keydown', handler)
   }, [])
 
+  // Clean up hover timer on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current)
+    }
+  }, [])
+
   const handleItemClick = useCallback((item: PopupMenuItem) => {
     if (item.submenu && item.submenu.length > 0) {
       // For submenu items, click triggers submenu display

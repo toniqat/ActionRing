@@ -2,19 +2,19 @@ import { useState, useEffect, useRef } from 'react'
 
 export type AnimationPhase = 'entering' | 'visible' | 'exiting' | 'gone'
 
-const SPEED_MS: Record<string, { expand: number; fade: number }> = {
-  slow: { expand: 320, fade: 240 },
-  normal: { expand: 200, fade: 150 },
-  fast: { expand: 110, fade: 85 }
+const SPEED_MS: Record<string, { expand: number }> = {
+  slow: { expand: 320 },
+  normal: { expand: 200 },
+  fast: { expand: 110 },
 }
 
 export function useRingAnimation(
   visible: boolean,
   speed: 'slow' | 'normal' | 'fast' = 'normal',
   onGone?: () => void
-): { phase: AnimationPhase; expandMs: number; fadeMs: number } {
+): { phase: AnimationPhase; expandMs: number } {
   const [phase, setPhase] = useState<AnimationPhase>('gone')
-  const { expand, fade } = SPEED_MS[speed]
+  const { expand } = SPEED_MS[speed]
   // Track whether we are already mid-entry so a second `visible=true` signal
   // (e.g. from a double-fired IPC event) does not restart the animation.
   const phaseRef = useRef<AnimationPhase>('gone')
@@ -47,7 +47,7 @@ export function useRingAnimation(
       }, expand)
       return () => clearTimeout(t)
     }
-  }, [visible, expand, fade])
+  }, [visible, expand])
 
-  return { phase, expandMs: expand, fadeMs: fade }
+  return { phase, expandMs: expand }
 }

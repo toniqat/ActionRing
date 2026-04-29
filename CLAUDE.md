@@ -17,17 +17,25 @@ Standalone overlay app replicating the Logitech MX Master 4 "Action Rings" featu
 | System tray | `src/main/TrayManager.ts` |
 | Window lifecycle | `src/main/WindowManager.ts` |
 | Login startup toggle | `src/main/LoginStartup.ts` |
+| Action sequence execution | `src/main/SequenceManager.ts` |
+| Popup menu window pool | `src/main/PopupMenuManager.ts` |
+| Action dialog modals (ask-input, choose-from-list, show-alert) | `src/main/DialogManager.ts` |
 | IPC handler modules | `src/main/ipc/` |
 | Ring overlay renderer | `src/renderer/ring/` |
 | Settings window renderer | `src/renderer/settings/` |
 | Appearance editor renderer | `src/renderer/appearance/` |
+| Shortcuts editor renderer | `src/renderer/shortcuts/` |
+| Progress overlay renderer | `src/renderer/progress/` |
+| Popup menu renderer | `src/renderer/popup-menu/` |
 | Preload scripts (IPC bridge) | `src/preload/` |
 | Shared types and constants | `shared/` |
 | Static assets (icons) | `resources/` |
+| MCP API server (local HTTP bridge) | `src/main/McpApiServer.ts` |
+| MCP stdio server (standalone) | `mcp-server/` |
 | Build config | `electron.vite.config.ts`, `package.json` build section |
 
 ## Architecture Notes
-- Three renderer processes: `ring` (transparent overlay), `settings`, and `appearance` (slot appearance editor)
+- Six renderer processes: `ring` (transparent overlay), `settings`, `appearance` (slot appearance editor), `shortcuts` (action sequence editor), `progress` (execution progress overlay), `popup-menu` (context menus)
 - Ring window: `transparent:true`, `focusable:false`, `alwaysOnTop:'screen-saver'`, `showInactive()`
 - uiohook-napi MUST be in main process only (native Node addon)
 - asarUnpack required for uiohook-napi in electron-builder config
@@ -72,6 +80,25 @@ npm run build:mac  # Package as macOS .dmg
 - `appearance:panel-sizes` — appearance → main (persist resizer sizes)
 - `appearance:close` — appearance → main (close and persist final slot)
 
+### Shortcuts editor
+- `shortcuts:open` — settings → main (open/focus shortcuts editor with slot data)
+- `shortcuts:get-data` — shortcuts → main (fetch initial slot data)
+- `shortcuts:update` — shortcuts → main (slot changed, relay to settings)
+- `shortcuts:updated` — main → settings (relayed slot update)
+- `shortcuts:data-refresh` — main → shortcuts (push new slot data to open window)
+- `shortcuts:close` — shortcuts → main (close and persist final slot)
+- `shortcuts:play` — shortcuts → main (test-play action sequence)
+- `shortcuts:committed` — main → settings (final slot committed on close)
+
+### Progress overlay
+- `progress:show` — main → progress (show progress bar)
+- `progress:update` — main → progress (update progress state)
+- `progress:hide` — main → progress (hide overlay)
+
+### Popup menu
+- `popup-menu:show` — renderer → main (show context menu at position)
+- `popup-menu:result` — main → renderer (selected menu item)
+
 ### App profiles
 - `app:add` / `app:remove` — settings → main
 - `app:profile:add` / `app:profile:remove` / `app:profile:rename` / `app:profile:set-active` — settings → main
@@ -91,7 +118,57 @@ npm run build:mac  # Package as macOS .dmg
 - `preset:export` / `preset:import` — settings → main (button preset files)
 - `trigger:start-mouse-capture` / `trigger:cancel-mouse-capture` — settings → main
 - `trigger:mouse-captured` — main → settings (captured button result)
-- `window:minimize` / `window:maximize` — settings/appearance → main
+- `window:minimize` / `window:maximize` / `window:close` — settings/appearance → main
+
+### Update / system
+- `app:get-version` — renderer → main (get app version string)
+- `update:check` — renderer → main (check GitHub for new release)
+- `shell:open-external` — renderer → main (open URL in default browser)
+- `app:show-error-log` — renderer → main (display error log dialog)
+- `app:restart` — renderer → main (restart the app)
+- `mcp:setup-claude` — settings → main (auto-register MCP server with Claude Code/Desktop)
+
+## MCP Server
+
+ActionRing exposes all its features via a local MCP (Model Context Protocol) server,
+allowing AI assistants like Claude to read/write config, create shortcuts, execute actions, and more.
+
+### Architecture
+1. **McpApiServer** (`src/main/McpApiServer.ts`) — HTTP API server running on `127.0.0.1:<random-port>` inside the Electron main process. Writes port to `<userData>/.mcp-port`.
+2. **MCP stdio server** (`mcp-server/`) — Standalone Node.js process implementing MCP over stdin/stdout. Reads the port file to discover the HTTP API.
+
+### Setup for Claude Desktop / Claude Code
+```jsonc
+// claude_desktop_config.json
+{
+  "mcpServers": {
+    "actionring": {
+      "command": "node",
+      "args": ["<absolute-path-to>/ActionRing/mcp-server/dist/index.js"]
+    }
+  }
+}
+```
+
+### Available MCP Tools
+| Tool | Description |
+|---|---|
+| `get_status` | Get ActionRing status |
+| `toggle_enabled` | Toggle on/off |
+| `get_config` / `save_config` / `reset_config` | Full config CRUD |
+| `list_shortcuts` / `get_shortcut` / `create_shortcut` / `update_shortcut` / `delete_shortcut` | Shortcuts library CRUD |
+| `execute_shortcut` | Run a shortcut by ID |
+| `list_shortcut_groups` / `create_shortcut_group` / `delete_shortcut_group` | Shortcut groups |
+| `list_apps` / `add_app` / `remove_app` | App entries |
+| `list_profiles` / `add_profile` / `remove_profile` / `rename_profile` / `set_active_profile` | Profiles |
+| `get_slots` / `update_slots` | Ring button slots |
+| `execute_actions` | Execute actions directly |
+| `get_action_types` | Action type reference/schema |
+
+### Dev Commands
+```bash
+npm run build:mcp   # Build the MCP server (cd mcp-server && npm install && npm run build)
+```
 
 ## Terminology
 For all UI, IPC, and domain terminology, see [PROMPT.md](./PROMPT.md). Always use the canonical names defined there when communicating about the project.

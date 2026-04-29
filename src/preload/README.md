@@ -9,6 +9,9 @@ Preload scripts that bridge the main process and renderer processes via Electron
 | `ring.ts` | Ring overlay window | `window.ringAPI` — receives `ring:show` / `ring:hide` / `ring:cursor-move`, sends `ring:execute` / `ring:dismiss` / `ring:idle` |
 | `settings.ts` | Settings window | `window.settingsAPI` — config CRUD, file pickers, appearance editor open, app profile management, preset import/export, trigger mouse capture |
 | `appearance.ts` | Appearance editor window | `window.appearanceAPI` — slot data fetch, slot update relay, custom icon management, panel size persistence, window controls |
+| `shortcuts.ts` | Shortcuts editor window | `window.shortcutsAPI` — slot data fetch, action sequence editing, test-play actions, preset import/export, popup menus |
+| `progress.ts` | Progress overlay window | `window.progressAPI` — receives progress show/update/hide events from main process |
+| `popupMenu.ts` | Popup menu windows | `window.popupMenuAPI` — receives menu items, sends selected item back to main |
 
 ## Rules
 

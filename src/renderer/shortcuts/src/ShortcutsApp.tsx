@@ -7,6 +7,7 @@ import { I18nProvider, useT } from '@settings/i18n/I18nContext'
 import { BUILTIN_ICONS } from '@shared/icons'
 import { UIIcon } from '@shared/UIIcon'
 import { SVGIcon } from '@shared/SVGIcon'
+import { IconColorPopup } from '@shared/IconColorPopup'
 import { HexColorPicker } from 'react-colorful'
 import { VariableInput, collectAvailableVars, collectAvailableVarInfos, ReturnValuePickerContext, LoopInsertContext, clampMenuPosition, getSourceIcon, getSourceColor, ValueDragContext, TAB_FIELD_ATTR, focusNextTabField } from './VariableInput'
 import { CustomSelect } from './CustomSelect'
@@ -44,6 +45,13 @@ import type {
   ConditionCriteria, ConditionOperator, ConditionMatchLogic, ConditionMode, SwitchCase,
   LoopMode, VarOperation, VarMode, CalculateAction, CalcOperation, CommentAction, StopAction,
   SequenceAction, WaitMode, ListAction, DictAction,
+  ClipboardAction, ClipboardMode, TextAction, TextMode, TextCaseMode, TransformAction, TransformMode, HashAlgorithm,
+  AskInputAction, AskInputType, ChooseFromListAction, ShowAlertAction,
+  HttpRequestAction, HttpMethod, FileAction, FileMode, FileInfoField,
+  DateTimeAction, DateTimeMode, DateTimeUnit, TryCatchAction,
+  RegistryAction, RegistryMode, RegistryHive, RegistryDataType,
+  EnvironmentAction, EnvironmentMode,
+  ServiceAction, ServiceMode,
 } from '@shared/config.types'
 import type { ShortcutEntry, ShortcutGroup } from '@shared/config.types'
 import type { Translations } from '@settings/i18n/locales'
@@ -67,6 +75,8 @@ declare global {
       addRecentIcon: (iconRef: string) => void
       showPopupMenu: (request: PopupMenuShowRequest) => Promise<string | null>
       onThemeChanged: (cb: (theme: 'light' | 'dark') => void) => void
+      showErrorLog: (logData: { message: string; stack: string; componentStack?: string }) => Promise<void>
+      restartApp: () => Promise<void>
     }
   }
 }
@@ -90,6 +100,17 @@ class SmartPointerSensor extends PointerSensor {
     {
       eventName: 'onPointerDown' as const,
       handler: ({ nativeEvent: e }: { nativeEvent: PointerEvent }) => {
+        return !isInteractiveElement(e.target as HTMLElement)
+      },
+    },
+  ]
+}
+
+class SmartKeyboardSensor extends KeyboardSensor {
+  static activators = [
+    {
+      eventName: 'onKeyDown' as const,
+      handler: ({ nativeEvent: e }: { nativeEvent: KeyboardEvent }) => {
         return !isInteractiveElement(e.target as HTMLElement)
       },
     },
@@ -122,8 +143,13 @@ function getNodeReturnValues(
   t: (key: keyof Translations) => string,
 ): NodeReturnValue[] | null {
   switch (action.type) {
-    case 'launch':
-      return [{ ref: `$__launch_${nodeIndex}`, label: t('script.returnLaunchTarget'), sourceType: 'launch' }]
+    case 'launch': {
+      const launchRvs: NodeReturnValue[] = [{ ref: `$__launch_${nodeIndex}`, label: t('script.returnLaunchTarget'), sourceType: 'launch' }]
+      if (action.pidVar) {
+        launchRvs.push({ ref: `$${action.pidVar}`, label: t('script.launchPid'), sourceType: 'launch' })
+      }
+      return launchRvs
+    }
     case 'keyboard':
       return [{ ref: `$__keys_${nodeIndex}`, label: t('script.returnKeysCombo'), sourceType: 'keyboard' }]
     case 'shell':
@@ -155,6 +181,68 @@ function getNodeReturnValues(
       if (mode === 'foreach' && a.itemVar) return [{ ref: `$${a.itemVar}`, label: t('script.returnLoopItem'), sourceType: 'loop' }]
       return null
     }
+    case 'clipboard': {
+      const a = action as ClipboardAction
+      if (a.mode === 'get' && a.resultVar) return [{ ref: `$${a.resultVar}`, label: t('script.returnResultVar'), sourceType: 'clipboard' }]
+      return null
+    }
+    case 'text': {
+      const a = action as TextAction
+      if (a.resultVar) return [{ ref: `$${a.resultVar}`, label: t('script.returnResultVar'), sourceType: 'text' }]
+      return null
+    }
+    case 'transform': {
+      const a = action as TransformAction
+      if (a.resultVar) return [{ ref: `$${a.resultVar}`, label: t('script.returnResultVar'), sourceType: 'transform' }]
+      return null
+    }
+    case 'ask-input': {
+      const a = action as AskInputAction
+      if (a.resultVar) return [{ ref: `$${a.resultVar}`, label: t('script.returnResultVar'), sourceType: 'ask-input' }]
+      return null
+    }
+    case 'choose-from-list': {
+      const a = action as ChooseFromListAction
+      if (a.resultVar) return [{ ref: `$${a.resultVar}`, label: t('script.returnResultVar'), sourceType: 'choose-from-list' }]
+      return null
+    }
+    case 'show-alert': {
+      const a = action as ShowAlertAction
+      if (a.resultVar) return [{ ref: `$${a.resultVar}`, label: t('script.returnResultVar'), sourceType: 'show-alert' }]
+      return null
+    }
+    case 'http-request': {
+      const a = action as HttpRequestAction
+      const results: ReturnValueInfo[] = []
+      if (a.resultVar) results.push({ ref: `$${a.resultVar}`, label: t('script.returnResultVar'), sourceType: 'http-request' })
+      if (a.statusVar) results.push({ ref: `$${a.statusVar}`, label: t('script.httpStatusVar'), sourceType: 'http-request' })
+      return results.length > 0 ? results : null
+    }
+    case 'file': {
+      const a = action as FileAction
+      if (a.resultVar) return [{ ref: `$${a.resultVar}`, label: t('script.returnResultVar'), sourceType: 'file' }]
+      return null
+    }
+    case 'date-time': {
+      const a = action as DateTimeAction
+      if (a.resultVar) return [{ ref: `$${a.resultVar}`, label: t('script.returnResultVar'), sourceType: 'date-time' }]
+      return null
+    }
+    case 'registry': {
+      const a = action as RegistryAction
+      if (a.resultVar) return [{ ref: `$${a.resultVar}`, label: t('script.returnResultVar'), sourceType: 'registry' }]
+      return null
+    }
+    case 'environment': {
+      const a = action as EnvironmentAction
+      if (a.resultVar) return [{ ref: `$${a.resultVar}`, label: t('script.returnResultVar'), sourceType: 'environment' }]
+      return null
+    }
+    case 'service': {
+      const a = action as ServiceAction
+      if (a.resultVar) return [{ ref: `$${a.resultVar}`, label: t('script.returnResultVar'), sourceType: 'service' }]
+      return null
+    }
     default:
       return null
   }
@@ -179,6 +267,30 @@ function nodeHasPipelineOutput(action: ActionConfig): boolean {
       return !!(action as CalculateAction).resultVar
     case 'run-shortcut':
       return !!(action as RunShortcutAction).outputVar
+    case 'clipboard':
+      return (action as ClipboardAction).mode === 'get' && !!(action as ClipboardAction).resultVar
+    case 'text':
+      return !!(action as TextAction).resultVar
+    case 'transform':
+      return !!(action as TransformAction).resultVar
+    case 'ask-input':
+      return !!(action as AskInputAction).resultVar
+    case 'choose-from-list':
+      return !!(action as ChooseFromListAction).resultVar
+    case 'show-alert':
+      return !!(action as ShowAlertAction).resultVar
+    case 'http-request':
+      return !!(action as HttpRequestAction).resultVar
+    case 'file':
+      return !!(action as FileAction).resultVar
+    case 'date-time':
+      return !!(action as DateTimeAction).resultVar
+    case 'registry':
+      return !!(action as RegistryAction).resultVar
+    case 'environment':
+      return !!(action as EnvironmentAction).resultVar
+    case 'service':
+      return !!(action as ServiceAction).resultVar
     // Everything else: set-var (declares a named variable — no pipe),
     // control flow (if-else, loop, sequence), side-effects (wait, toast,
     // comment, escape, stop, system) — pipeline breaks.
@@ -217,6 +329,19 @@ function getNodeStyle(t: (key: keyof Translations) => string): NodeStyle {
     calculate:       { label: t('action.calculate'),       icon: 'calculate',     color: '#10b981', desc: t('action.calculateDesc') },
     comment:         { label: t('action.comment'),         icon: 'comment',       color: '#6b7280', desc: t('action.commentDesc') },
     sequence:        { label: t('action.sequence'),        icon: 'all_inclusive', color: '#2dd4bf', desc: t('action.sequenceDesc') },
+    clipboard:       { label: t('action.clipboard'),       icon: 'clipboard',     color: '#a78bfa', desc: t('action.clipboardDesc') },
+    text:            { label: t('action.text'),            icon: 'text_fields',   color: '#f472b6', desc: t('action.textDesc') },
+    transform:       { label: t('action.transform'),       icon: 'transform',     color: '#38bdf8', desc: t('action.transformDesc') },
+    'ask-input':     { label: t('action.askInput'),        icon: 'ask_input',     color: '#fb923c', desc: t('action.askInputDesc') },
+    'choose-from-list': { label: t('action.chooseFromList'), icon: 'choose_list', color: '#fb923c', desc: t('action.chooseFromListDesc') },
+    'show-alert':    { label: t('action.showAlert'),       icon: 'show_alert',    color: '#fb923c', desc: t('action.showAlertDesc') },
+    'http-request':  { label: t('action.httpRequest'),     icon: 'http_request',  color: '#38bdf8', desc: t('action.httpRequestDesc') },
+    file:            { label: t('action.file'),            icon: 'file_action',   color: '#10b981', desc: t('action.fileDesc') },
+    'date-time':     { label: t('action.dateTime'),        icon: 'date_time',     color: '#f472b6', desc: t('action.dateTimeDesc') },
+    'try-catch':     { label: t('action.tryCatch'),        icon: 'try_catch',     color: '#2dd4bf', desc: t('action.tryCatchDesc') },
+    registry:        { label: t('action.registry'),        icon: 'registry',      color: '#60a5fa', desc: t('action.registryDesc') },
+    environment:     { label: t('action.environment'),     icon: 'environment_var', color: '#34d399', desc: t('action.environmentDesc') },
+    service:         { label: t('action.service'),         icon: 'service_action', color: '#f59e0b', desc: t('action.serviceDesc') },
   }
 }
 
@@ -247,17 +372,9 @@ const SYSTEM_ACTIONS: SystemActionId[] = [
   'screenshot', 'lock-screen', 'show-desktop',
 ]
 
-// ── Icon/Color picker constants ────────────────────────────────────────────────
-const PRESET_BG_COLORS = [
-  '#ef4444', '#f97316', '#eab308', '#22c55e',
-  '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899',
-]
-const PICKER_BTN = 36
-const PICKER_GAP = 6
-const PICKER_COLS = 5
 
 const ACTION_TYPES  = ['launch', 'keyboard', 'shell', 'system', 'link', 'mouse-move', 'mouse-click']
-const SCRIPT_TYPES  = ['if-else', 'loop', 'sequence', 'wait', 'set-var', 'list', 'dict', 'toast', 'run-shortcut', 'escape', 'stop', 'calculate', 'comment']
+const SCRIPT_TYPES  = ['if-else', 'loop', 'sequence', 'try-catch', 'wait', 'set-var', 'list', 'dict', 'clipboard', 'text', 'transform', 'date-time', 'ask-input', 'choose-from-list', 'show-alert', 'http-request', 'file', 'registry', 'environment', 'service', 'toast', 'run-shortcut', 'escape', 'stop', 'calculate', 'comment']
 
 // ── Subcategory definitions ──────────────────────────────────────────────────
 interface SubCategory {
@@ -271,8 +388,11 @@ const ACTION_SUBCATEGORIES: SubCategory[] = [
 ]
 
 const SCRIPT_SUBCATEGORIES: SubCategory[] = [
-  { labelKey: 'palette.sub.flow',    types: ['if-else', 'loop', 'sequence', 'escape', 'stop', 'wait'] },
-  { labelKey: 'palette.sub.data',    types: ['set-var', 'list', 'dict'] },
+  { labelKey: 'palette.sub.flow',    types: ['if-else', 'loop', 'sequence', 'try-catch', 'escape', 'stop', 'wait'] },
+  { labelKey: 'palette.sub.data',    types: ['set-var', 'list', 'dict', 'clipboard', 'text', 'transform', 'date-time'] },
+  { labelKey: 'palette.sub.interaction', types: ['ask-input', 'choose-from-list', 'show-alert'] },
+  { labelKey: 'palette.sub.io', types: ['http-request', 'file'] },
+  { labelKey: 'palette.sub.windows', types: ['registry', 'environment', 'service'] },
   { labelKey: 'palette.sub.utility', types: ['toast', 'run-shortcut', 'calculate', 'comment'] },
 ]
 
@@ -421,6 +541,7 @@ function ShortcutVariableInput({
   availableVars,
   availableVarInfos,
   nodeIndex,
+  label,
   style: styleProp,
 }: {
   value: string
@@ -428,6 +549,7 @@ function ShortcutVariableInput({
   availableVars: string[]
   availableVarInfos?: VarInfo[]
   nodeIndex?: number
+  label?: string
   style?: React.CSSProperties
 }): JSX.Element {
   const t = useT()
@@ -623,7 +745,7 @@ function ShortcutVariableInput({
               onMouseOut={e => { if (!submenuOpen) hoverOff(e) }}
               style={{ ...menuItemStyle('#a78bfa'), background: submenuOpen ? 'rgba(255,255,255,0.14)' : 'transparent' }}>
               <UIIcon name="variable" size={14} />
-              <span style={{ flex: 1 }}>변수 선택</span>
+              <span style={{ flex: 1 }}>{t('shortcuts.selectVariable')}</span>
               <span style={{ fontSize: 10, opacity: 0.5, marginLeft: 4 }}>▸</span>
             </div>
           )}
@@ -631,7 +753,7 @@ function ShortcutVariableInput({
           {/* Return value select */}
           <div onClick={() => { handleSelect('__return_value'); setSubmenuOpen(false) }}
             style={menuItemStyle('#f59e0b')} onMouseOver={hoverOn} onMouseOut={hoverOff}>
-            <UIIcon name="output" size={14} /><span>반환값 선택</span>
+            <UIIcon name="output" size={14} /><span>{t('shortcuts.selectReturnValue')}</span>
           </div>
         </div>
 
@@ -684,7 +806,8 @@ function ShortcutVariableInput({
         <UIIcon name={getSourceIcon(matchedVar?.sourceType ?? 'set-var')} size={12} />{varName}
       </span>
     )
-    return (<><div onClick={handleButtonClick} data-no-dnd="true" {...dropTargetProps} style={{
+    const labelEl = label ? <span style={{ fontSize: 9, color: 'var(--c-text-dim)', flexShrink: 0, fontWeight: 500, letterSpacing: '0.02em', whiteSpace: 'nowrap', userSelect: 'none' }}>{label}</span> : null
+    return (<>{labelEl}<div onClick={handleButtonClick} data-no-dnd="true" {...dropTargetProps} style={{
       display: 'inline-flex', alignItems: 'center', borderRadius: 6,
       background: 'var(--c-accent-bg)', border: '1px solid var(--c-accent-border)', padding: '2px 4px',
       ...styleProp,
@@ -692,9 +815,11 @@ function ShortcutVariableInput({
     }}>{chipEl}</div>{renderMenu()}</>)
   }
 
+  const labelElBtn = label ? <span style={{ fontSize: 9, color: 'var(--c-text-dim)', flexShrink: 0, fontWeight: 500, letterSpacing: '0.02em', whiteSpace: 'nowrap', userSelect: 'none' }}>{label}</span> : null
   return (
     <>
       {recording && <style>{`@keyframes recorder-pulse{0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0.3)}50%{box-shadow:0 0 0 4px rgba(239,68,68,0)}}`}</style>}
+      {labelElBtn}
       <button ref={btnRef} onClick={handleButtonClick} data-no-dnd="true" {...dropTargetProps} style={{
         ...baseStyle, cursor: 'pointer', textAlign: 'left', display: 'inline-flex',
         alignItems: 'center', gap: 4, overflow: 'hidden', minHeight: 26,
@@ -734,6 +859,19 @@ function makeDefaultAction(type: string, extraData?: { shortcutId?: string }): A
     case 'link':          return { type: 'link', url: '' }
     case 'mouse-move':    return { type: 'mouse-move', mode: 'set', x: '', y: '' }
     case 'mouse-click':   return { type: 'mouse-click', button: 'left' }
+    case 'clipboard':     return { type: 'clipboard', mode: 'get', resultVar: '' } as ActionConfig
+    case 'text':          return { type: 'text', mode: 'replace', input: '', resultVar: '', find: '', replaceWith: '' } as ActionConfig
+    case 'transform':     return { type: 'transform', mode: 'json-parse', input: '', resultVar: '' } as ActionConfig
+    case 'ask-input':     return { type: 'ask-input', resultVar: '' } as ActionConfig
+    case 'choose-from-list': return { type: 'choose-from-list', items: [''], resultVar: '' } as ActionConfig
+    case 'show-alert':    return { type: 'show-alert' } as ActionConfig
+    case 'http-request':  return { type: 'http-request', url: '', method: 'GET' as HttpMethod, resultVar: '' } as ActionConfig
+    case 'file':          return { type: 'file', mode: 'read' as FileMode, path: '', resultVar: '' } as ActionConfig
+    case 'date-time':     return { type: 'date-time', mode: 'now' as DateTimeMode, resultVar: '' } as ActionConfig
+    case 'try-catch':     return { type: 'try-catch', tryActions: [], catchActions: [] } as ActionConfig
+    case 'registry':      return { type: 'registry', mode: 'read' as RegistryMode, hive: 'HKCU' as RegistryHive, keyPath: '', resultVar: '' } as ActionConfig
+    case 'environment':   return { type: 'environment', mode: 'get' as EnvironmentMode, name: '', resultVar: '' } as ActionConfig
+    case 'service':       return { type: 'service', mode: 'status' as ServiceMode, serviceName: '', resultVar: '' } as ActionConfig
     default:              return { type: 'system', action: 'volume-up' as SystemActionId }
   }
 }
@@ -754,6 +892,11 @@ function getBranchActionsFromAction(action: ActionConfig, branchType: string): A
   }
   if (action.type === 'loop' && branchType === 'loop') return (action as LoopAction).body
   if (action.type === 'sequence' && branchType === 'sequence') return (action as SequenceAction).body
+  if (action.type === 'try-catch') {
+    const a = action as TryCatchAction
+    if (branchType === 'try') return a.tryActions
+    if (branchType === 'catch') return a.catchActions
+  }
   return null
 }
 
@@ -773,6 +916,11 @@ function setBranchActionsOnAction(action: ActionConfig, branchType: string, newA
   }
   if (action.type === 'loop' && branchType === 'loop') return { ...(action as LoopAction), body: newActions }
   if (action.type === 'sequence' && branchType === 'sequence') return { ...(action as SequenceAction), body: newActions }
+  if (action.type === 'try-catch') {
+    const a = action as TryCatchAction
+    if (branchType === 'try') return { ...a, tryActions: newActions }
+    if (branchType === 'catch') return { ...a, catchActions: newActions }
+  }
   return action
 }
 
@@ -822,6 +970,21 @@ function extractNodeIdFromBranchId(branchId: string): string {
   const withoutPrefix = branchId.slice(7)
   const colonIdx = withoutPrefix.indexOf(':')
   return colonIdx === -1 ? withoutPrefix : withoutPrefix.slice(0, colonIdx)
+}
+
+/** When a sibling item is removed from a parent branch, path-based branchIds that
+ *  point into items AFTER the removed index need their index decremented by one.
+ *  e.g. removing index 0 from branch:abc:try makes branch:abc:try:1:sequence → branch:abc:try:0:sequence */
+function adjustBranchIdAfterRemoval(targetBranchId: string, sourceBranchId: string, sourceIndex: number): string {
+  const prefix = sourceBranchId + ':'
+  if (!targetBranchId.startsWith(prefix)) return targetBranchId
+  const rest = targetBranchId.slice(prefix.length)
+  const colonPos = rest.indexOf(':')
+  const indexStr = colonPos === -1 ? rest : rest.slice(0, colonPos)
+  const idx = parseInt(indexStr, 10)
+  if (isNaN(idx) || idx <= sourceIndex) return targetBranchId
+  const suffix = colonPos === -1 ? '' : rest.slice(colonPos)
+  return prefix + (idx - 1) + suffix
 }
 
 interface NestedActionListProps {
@@ -1004,6 +1167,7 @@ function ConditionInlineFields({ action, onChange, availableVars, availableVarIn
             value={action.switchValue ?? ''}
             onChange={(v) => onChange({ ...action, switchValue: v })}
             availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            label={t('script.switchValue')}
             style={{ ...inpField, flex: 1, minWidth: 100 }}
           />
         )}
@@ -1020,6 +1184,7 @@ function ConditionInlineFields({ action, onChange, availableVars, availableVarIn
                   value={crit.variable}
                   onChange={(v) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, variable: v } : c))}
                   availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+                  label={t('script.conditionVar')}
                   style={{ ...inpField, minWidth: 90 }}
                 />
                 <CustomSelect
@@ -1033,6 +1198,7 @@ function ConditionInlineFields({ action, onChange, availableVars, availableVarIn
                     value={crit.value}
                     onChange={(v) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, value: v } : c))}
                     availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+                    label={t('script.conditionVal')}
                     style={{ ...inpField, minWidth: 80 }}
                   />
                 )}
@@ -1311,6 +1477,7 @@ function ConditionCriteriaSection({ action, onChange, availableVars, availableVa
             value={crit.variable}
             onChange={(v) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, variable: v } : c))}
             availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            label={t('script.conditionVar')}
             style={{ ...inpField, minWidth: 90 }}
           />
           <CustomSelect
@@ -1324,6 +1491,7 @@ function ConditionCriteriaSection({ action, onChange, availableVars, availableVa
               value={crit.value}
               onChange={(v) => updateCriteria(criteria.map((c, i) => i === idx ? { ...c, value: v } : c))}
               availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+              label={t('script.conditionVal')}
               style={{ ...inpField, minWidth: 80 }}
             />
           )}
@@ -1730,6 +1898,76 @@ function SequenceBranchesExternal({ action, onChange, nodeStyle, library, nodeId
   )
 }
 
+// ── TryCatchBranchesExternal — top-level try/catch branch structure ──────────
+
+function TryCatchBranchesExternal({ action, onChange, nodeStyle, library, nodeId, currentEntryId }: {
+  action: TryCatchAction
+  onChange: (a: ActionConfig) => void
+  nodeStyle: NodeStyle
+  library: ShortcutEntry[]
+  nodeId: string
+  currentEntryId?: string
+}): JSX.Element {
+  const t = useT()
+  const color = nodeStyle['try-catch']?.color ?? '#2dd4bf'
+  return (
+    <div>
+      {/* TRY divider */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '4px 0 2px 0',
+      }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.9, textTransform: 'uppercase', flexShrink: 0 }}>
+          {t('script.tryLabel')}
+        </span>
+        <div style={{ flex: 1, height: 1, background: `${color}44` }} />
+      </div>
+      <NestedActionList
+        label=""
+        color={color}
+        actions={action.tryActions}
+        onChange={(acts) => onChange({ ...action, tryActions: acts })}
+        nodeStyle={nodeStyle}
+        library={library}
+        branchId={`branch:${nodeId}:try`}
+        currentEntryId={currentEntryId}
+      />
+
+      {/* CATCH divider */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '4px 0 2px 0',
+      }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color: '#ef4444', letterSpacing: '0.08em', opacity: 0.9, textTransform: 'uppercase', flexShrink: 0 }}>
+          {t('script.catchLabel')}
+        </span>
+        <div style={{ flex: 1, height: 1, background: 'rgba(239,68,68,0.3)' }} />
+      </div>
+      <NestedActionList
+        label=""
+        color="#ef4444"
+        actions={action.catchActions}
+        onChange={(acts) => onChange({ ...action, catchActions: acts })}
+        nodeStyle={nodeStyle}
+        library={library}
+        branchId={`branch:${nodeId}:catch`}
+        currentEntryId={currentEntryId}
+      />
+
+      {/* END TRY divider */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '4px 0 0 0',
+      }}>
+        <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.6, textTransform: 'uppercase', flexShrink: 0 }}>
+          {t('script.tryCatchEnd')}
+        </span>
+        <div style={{ flex: 1, height: 1, background: `${color}22` }} />
+      </div>
+    </div>
+  )
+}
+
 // ── RunShortcutInline — sub-component for run-shortcut with gallery picker ────
 
 function RunShortcutInline({ action, onChange, library, groups, resourceIcons, currentEntryId, inp }: {
@@ -1846,22 +2084,32 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
 
   if (action.type === 'launch') {
     return (
-      <VariableInput
-        value={action.target}
-        onChange={(v) => onChange({ type: 'launch', target: v })}
-        availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
-        extraMenuItems={[{
-          id: 'browse-file',
-          label: t('script.browseFile'),
-          icon: 'folder',
-          color: '#60a5fa',
-          onSelect: async () => {
-            const path = await window.shortcutsAPI.pickExe()
-            if (path) onChange({ type: 'launch', target: path })
-          },
-        }]}
-        style={{ ...inpField, minWidth: 60 }}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <VariableInput
+          value={action.target}
+          onChange={(v) => onChange({ ...action, target: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.labelTarget')}
+          extraMenuItems={[{
+            id: 'browse-file',
+            label: t('script.browseFile'),
+            icon: 'folder',
+            color: '#60a5fa',
+            onSelect: async () => {
+              const path = await window.shortcutsAPI.pickExe()
+              if (path) onChange({ ...action, target: path })
+            },
+          }]}
+          style={{ ...inpField, minWidth: 60 }}
+        />
+        <VariableInput
+          value={action.pidVar ?? ''}
+          onChange={(v) => onChange({ ...action, pidVar: v || undefined })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.launchPid')}
+          style={{ ...inpField, minWidth: 50 }}
+        />
+      </div>
     )
   }
 
@@ -1871,6 +2119,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
         value={action.keys}
         onChange={(keys) => onChange({ type: 'keyboard', keys })}
         availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+        label={t('script.labelKeys')}
         style={{ ...inpField, minWidth: 60 }}
       />
     )
@@ -1882,6 +2131,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
         value={action.command}
         onChange={(v) => onChange({ type: 'shell', command: v })}
         availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+        label={t('script.labelCommand')}
         style={{ ...inpField, minWidth: 120, flex: 1 }}
       />
     )
@@ -1904,6 +2154,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
         value={action.url}
         onChange={(v) => onChange({ type: 'link', url: v })}
         availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+        label="URL"
         style={{ ...inpField, minWidth: 120, flex: 1 }}
         placeholder="https://..."
       />
@@ -1971,6 +2222,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
           value={a.name}
           onChange={(v) => onChange({ ...a, name: v })}
           availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.sequenceName')}
           style={{ ...inpField, minWidth: 100, flex: 1 }}
         />
         <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--c-text-dim)', cursor: 'pointer' }}>
@@ -2018,6 +2270,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
             value={a.variable ?? ''}
             onChange={(v) => onChange({ ...a, variable: v })}
             availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            label={t('script.labelVariable')}
             style={{ ...inpField, minWidth: 100 }}
           />
         )}
@@ -2026,6 +2279,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
             value={a.launchRef ?? ''}
             onChange={(v) => onChange({ ...a, launchRef: v })}
             availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            label={t('script.waitAppTarget')}
             style={{ ...inpField, minWidth: 140 }}
           />
         )}
@@ -2048,6 +2302,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
           onChange={(v) => onChange({ ...a, name: v })}
           availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
           noReturnValues
+          label={t('script.varName')}
           style={{ ...inpField, minWidth: 60 }}
         />
         <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>=</span>
@@ -2055,6 +2310,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
           value={a.value}
           onChange={(v) => onChange({ ...a, value: v })}
           availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.varValue')}
           style={{ ...inpField, flex: 1, minWidth: 60 }}
         />
       </div>
@@ -2104,6 +2360,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
                 value={a.value ?? ''}
                 onChange={(v) => onChange({ ...a, value: v })}
                 availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+                label={t('script.varValue')}
                 style={{ ...inpField, flex: 1, minWidth: 80 }}
               />
             </>
@@ -2175,6 +2432,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
                 value={a.value ?? ''}
                 onChange={(v) => onChange({ ...a, value: v })}
                 availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+                label={t('script.varValue')}
                 style={{ ...inpField, flex: 1, minWidth: 80 }}
               />
             </>
@@ -2201,13 +2459,16 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
     return null
   }
 
+  // Toast — header-only portion (title); card body (message) rendered in SortableNode
   if (action.type === 'toast') {
     const a = action as ToastAction
     return (
       <VariableInput
-        value={a.message}
-        onChange={(v) => onChange({ ...a, message: v })}
+        value={a.title ?? ''}
+        onChange={(v) => onChange({ ...a, title: v || undefined })}
         availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+        label={t('script.toastTitle')}
+        placeholder={t('script.toastTitle')}
         style={{ ...inpField, minWidth: 120, flex: 1 }}
       />
     )
@@ -2251,6 +2512,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
             value={String(a.count ?? '')}
             onChange={(v) => { const n = parseInt(v, 10); onChange({ ...a, count: !isNaN(n) && !/^\$|^@/.test(v) ? Math.max(1, Math.min(1000, n)) : v }) }}
             availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            label={t('script.labelCount')}
             style={{ ...inpField, minWidth: 40 }}
           />
         )}
@@ -2260,6 +2522,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
               value={String(a.start ?? '')}
               onChange={(v) => { const n = parseInt(v, 10); onChange({ ...a, start: !isNaN(n) && !/^\$|^@/.test(v) ? n : v }) }}
               availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+              label={t('script.labelStart')}
               style={{ ...inpField, minWidth: 40 }}
             />
             <span style={{ fontSize: 11, color: 'var(--c-text-dim)', flexShrink: 0 }}>{t('script.loopTo')}</span>
@@ -2290,6 +2553,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
                 onChange({ ...a, listVar: varName, itemVar: '_item', keyVar: '_key' })
               }}
               availableVars={foreachVars} availableVarInfos={foreachVarInfos} nodeIndex={nodeIndex}
+              label={t('script.loopListVar')}
               style={{ ...inpField, minWidth: 60 }}
             />
           )
@@ -2344,6 +2608,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
           value={a.operandA}
           onChange={(v) => onChange({ ...a, operandA: v })}
           availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label="A"
           style={{ ...inpField, minWidth: 60 }}
         />
         <CustomSelect
@@ -2357,6 +2622,7 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
             value={a.operandB ?? ''}
             onChange={(v) => onChange({ ...a, operandB: v })}
             availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            label="B"
             style={{ ...inpField, minWidth: 60 }}
           />
         )}
@@ -2364,15 +2630,757 @@ function InlineNodeFields({ action, onChange, nodeStyle: _nodeStyle, library, gr
     )
   }
 
-  if (action.type === 'comment') {
-    const a = action as CommentAction
+  // ── Clipboard ─────────────────────────────────────────────────────────────
+  if (action.type === 'clipboard') {
+    const a = action as ClipboardAction
+    const CLIPBOARD_MODES: { value: ClipboardMode; label: string }[] = [
+      { value: 'get', label: t('script.clipboardGet') },
+      { value: 'set', label: t('script.clipboardSet') },
+    ]
     return (
-      <input
-        value={a.text}
-        onChange={(e) => onChange({ ...a, text: e.target.value })}
-        style={{ ...inpField, flex: 1, minWidth: 140, fontStyle: 'italic' }}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <CustomSelect
+          value={a.mode}
+          onChange={(v) => onChange({ ...a, mode: v as ClipboardMode })}
+          options={CLIPBOARD_MODES.map((m) => ({ value: m.value, label: m.label }))}
+          style={{ ...inp, minWidth: 60 }}
+        />
+        {a.mode === 'set' && (
+          <VariableInput
+            value={a.value ?? ''}
+            onChange={(v) => onChange({ ...a, value: v })}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            label={t('script.clipboardValue')}
+            placeholder={t('script.clipboardValue')}
+            style={{ ...inpField, flex: 1, minWidth: 80 }}
+          />
+        )}
+        {a.mode === 'get' && (
+          <VariableInput
+            value={a.resultVar ?? ''}
+            onChange={(v) => onChange({ ...a, resultVar: v })}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            label={t('script.labelResult')}
+            placeholder={t('script.calcResult')}
+            style={{ ...inpField, minWidth: 70 }}
+          />
+        )}
+      </div>
     )
+  }
+
+  // ── Text ─────────────────────────────────────────────────────────────────
+  if (action.type === 'text') {
+    const a = action as TextAction
+    const TEXT_MODES: { value: TextMode; label: string }[] = [
+      { value: 'replace',   label: t('script.textModeReplace') },
+      { value: 'split',     label: t('script.textModeSplit') },
+      { value: 'combine',   label: t('script.textModeCombine') },
+      { value: 'case',      label: t('script.textModeCase') },
+      { value: 'match',     label: t('script.textModeMatch') },
+      { value: 'substring', label: t('script.textModeSubstring') },
+      { value: 'length',    label: t('script.textModeLength') },
+      { value: 'trim',      label: t('script.textModeTrim') },
+      { value: 'pad',       label: t('script.textModePad') },
+    ]
+    const CASE_MODES: { value: TextCaseMode; label: string }[] = [
+      { value: 'upper',      label: t('script.textCaseUpper') },
+      { value: 'lower',      label: t('script.textCaseLower') },
+      { value: 'capitalize', label: t('script.textCaseCapitalize') },
+      { value: 'camel',      label: t('script.textCaseCamel') },
+      { value: 'snake',      label: t('script.textCaseSnake') },
+      { value: 'kebab',      label: t('script.textCaseKebab') },
+    ]
+
+    const modeFields = (): JSX.Element | null => {
+      switch (a.mode) {
+        case 'replace':
+          return (<>
+            <VariableInput value={a.find ?? ''} onChange={(v) => onChange({ ...a, find: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.textFind')} placeholder={t('script.textFind')} style={{ ...inpField, minWidth: 60 }} />
+            <VariableInput value={a.replaceWith ?? ''} onChange={(v) => onChange({ ...a, replaceWith: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.textReplaceWith')} placeholder={t('script.textReplaceWith')} style={{ ...inpField, minWidth: 60 }} />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--c-text-secondary)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={a.useRegex ?? false} onChange={(e) => onChange({ ...a, useRegex: e.target.checked })} style={{ margin: 0 }} />
+              {t('script.textRegex')}
+            </label>
+          </>)
+        case 'split':
+          return <VariableInput value={a.separator ?? ''} onChange={(v) => onChange({ ...a, separator: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.textSeparator')} placeholder={t('script.textSeparator')} style={{ ...inpField, minWidth: 50 }} />
+        case 'combine':
+          return (<>
+            <VariableInput value={a.listVar ?? ''} onChange={(v) => onChange({ ...a, listVar: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.textListVar')} placeholder={t('script.textListVar')} style={{ ...inpField, minWidth: 60 }} />
+            <VariableInput value={a.separator ?? ''} onChange={(v) => onChange({ ...a, separator: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.textSeparator')} placeholder={t('script.textSeparator')} style={{ ...inpField, minWidth: 50 }} />
+          </>)
+        case 'case':
+          return <CustomSelect value={a.caseMode ?? 'upper'} onChange={(v) => onChange({ ...a, caseMode: v as TextCaseMode })} options={CASE_MODES.map((m) => ({ value: m.value, label: m.label }))} style={{ ...inp, minWidth: 80 }} />
+        case 'match':
+          return (<>
+            <VariableInput value={a.pattern ?? ''} onChange={(v) => onChange({ ...a, pattern: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.textPattern')} placeholder={t('script.textPattern')} style={{ ...inpField, minWidth: 80 }} />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--c-text-secondary)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={a.matchAll ?? false} onChange={(e) => onChange({ ...a, matchAll: e.target.checked })} style={{ margin: 0 }} />
+              {t('script.textMatchAll')}
+            </label>
+          </>)
+        case 'substring':
+          return (<>
+            <VariableInput value={String(a.start ?? '0')} onChange={(v) => onChange({ ...a, start: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.textStart')} placeholder={t('script.textStart')} style={{ ...inpField, minWidth: 40, maxWidth: 60 }} />
+            <VariableInput value={a.length !== undefined ? String(a.length) : ''} onChange={(v) => onChange({ ...a, length: v || undefined })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.textLength')} placeholder={t('script.textLength')} style={{ ...inpField, minWidth: 40, maxWidth: 60 }} />
+          </>)
+        case 'length':
+        case 'trim':
+          return null
+        case 'pad':
+          return (<>
+            <VariableInput value={String(a.padLength ?? '')} onChange={(v) => onChange({ ...a, padLength: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.textPadLength')} placeholder={t('script.textPadLength')} style={{ ...inpField, minWidth: 40, maxWidth: 60 }} />
+            <VariableInput value={a.padChar ?? ''} onChange={(v) => onChange({ ...a, padChar: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.textPadChar')} placeholder={t('script.textPadChar')} style={{ ...inpField, minWidth: 30, maxWidth: 40 }} />
+            <CustomSelect value={a.padSide ?? 'start'} onChange={(v) => onChange({ ...a, padSide: v as 'start' | 'end' })} options={[{ value: 'start', label: t('script.textPadStart') }, { value: 'end', label: t('script.textPadEnd') }]} style={{ ...inp, minWidth: 50 }} />
+          </>)
+        default:
+          return null
+      }
+    }
+
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <CustomSelect
+          value={a.mode}
+          onChange={(v) => {
+            const next: Partial<TextAction> = { mode: v as TextMode }
+            if (v === 'case' && !a.caseMode) next.caseMode = 'upper'
+            onChange({ ...a, ...next })
+          }}
+          options={TEXT_MODES.map((m) => ({ value: m.value, label: m.label }))}
+          style={{ ...inp, minWidth: 70 }}
+        />
+        {a.mode !== 'combine' && (
+          <VariableInput
+            value={a.input}
+            onChange={(v) => onChange({ ...a, input: v })}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            label={t('script.textInput')}
+            placeholder={t('script.textInput')}
+            style={{ ...inpField, minWidth: 60 }}
+          />
+        )}
+        {modeFields()}
+        <VariableInput
+          value={a.resultVar}
+          onChange={(v) => onChange({ ...a, resultVar: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.labelResult')}
+          placeholder={t('script.calcResult')}
+          style={{ ...inpField, minWidth: 70 }}
+        />
+      </div>
+    )
+  }
+
+  // ── Transform ───────────────────────────────────────────────────────────
+  if (action.type === 'transform') {
+    const a = action as TransformAction
+    const TRANSFORM_MODES: { value: TransformMode; label: string }[] = [
+      { value: 'json-parse',     label: t('script.transformJsonParse') },
+      { value: 'json-stringify', label: t('script.transformJsonStringify') },
+      { value: 'url-encode',     label: t('script.transformUrlEncode') },
+      { value: 'url-decode',     label: t('script.transformUrlDecode') },
+      { value: 'base64-encode',  label: t('script.transformBase64Encode') },
+      { value: 'base64-decode',  label: t('script.transformBase64Decode') },
+      { value: 'hash',           label: t('script.transformHash') },
+    ]
+    const HASH_ALGOS: { value: HashAlgorithm; label: string }[] = [
+      { value: 'md5',    label: 'MD5' },
+      { value: 'sha1',   label: 'SHA-1' },
+      { value: 'sha256', label: 'SHA-256' },
+      { value: 'sha512', label: 'SHA-512' },
+    ]
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <CustomSelect
+          value={a.mode}
+          onChange={(v) => {
+            const next: Partial<TransformAction> = { mode: v as TransformMode }
+            if (v === 'hash' && !a.algorithm) next.algorithm = 'sha256'
+            onChange({ ...a, ...next })
+          }}
+          options={TRANSFORM_MODES.map((m) => ({ value: m.value, label: m.label }))}
+          style={{ ...inp, minWidth: 100 }}
+        />
+        <VariableInput
+          value={a.input}
+          onChange={(v) => onChange({ ...a, input: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.textInput')}
+          placeholder={t('script.textInput')}
+          style={{ ...inpField, flex: 1, minWidth: 60 }}
+        />
+        {a.mode === 'hash' && (
+          <CustomSelect
+            value={a.algorithm ?? 'sha256'}
+            onChange={(v) => onChange({ ...a, algorithm: v as HashAlgorithm })}
+            options={HASH_ALGOS.map((h) => ({ value: h.value, label: h.label }))}
+            style={{ ...inp, minWidth: 70 }}
+          />
+        )}
+        <VariableInput
+          value={a.resultVar}
+          onChange={(v) => onChange({ ...a, resultVar: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.labelResult')}
+          placeholder={t('script.calcResult')}
+          style={{ ...inpField, minWidth: 70 }}
+        />
+      </div>
+    )
+  }
+
+  // ── Ask Input ──────────────────────────────────────────────────────────
+  if (action.type === 'ask-input') {
+    const a = action as AskInputAction
+    const INPUT_TYPES: { value: AskInputType; label: string }[] = [
+      { value: 'text',     label: t('script.askInputTypeText') },
+      { value: 'number',   label: t('script.askInputTypeNumber') },
+      { value: 'password', label: t('script.askInputTypePassword') },
+    ]
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <CustomSelect
+          value={a.inputType ?? 'text'}
+          onChange={(v) => onChange({ ...a, inputType: v as AskInputType })}
+          options={INPUT_TYPES.map((m) => ({ value: m.value, label: m.label }))}
+          style={{ ...inp, minWidth: 70 }}
+        />
+        <VariableInput
+          value={a.title ?? ''}
+          onChange={(v) => onChange({ ...a, title: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.askInputTitle')}
+          placeholder={t('script.askInputTitle')}
+          style={{ ...inpField, minWidth: 60 }}
+        />
+        <VariableInput
+          value={a.prompt ?? ''}
+          onChange={(v) => onChange({ ...a, prompt: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.askInputPrompt')}
+          placeholder={t('script.askInputPrompt')}
+          style={{ ...inpField, flex: 1, minWidth: 60 }}
+        />
+        <VariableInput
+          value={a.defaultValue ?? ''}
+          onChange={(v) => onChange({ ...a, defaultValue: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.askInputDefault')}
+          placeholder={t('script.askInputDefault')}
+          style={{ ...inpField, minWidth: 50 }}
+        />
+        <VariableInput
+          value={a.resultVar}
+          onChange={(v) => onChange({ ...a, resultVar: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.labelResult')}
+          placeholder={t('script.calcResult')}
+          style={{ ...inpField, minWidth: 70 }}
+        />
+      </div>
+    )
+  }
+
+  // ── Choose from List ──────────────────────────────────────────────────
+  if (action.type === 'choose-from-list') {
+    const a = action as ChooseFromListAction
+    const useListVar = !!a.listVar
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <VariableInput
+          value={a.title ?? ''}
+          onChange={(v) => onChange({ ...a, title: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.chooseTitle')}
+          placeholder={t('script.chooseTitle')}
+          style={{ ...inpField, minWidth: 50 }}
+        />
+        <CustomSelect
+          value={useListVar ? 'variable' : 'items'}
+          onChange={(v) => {
+            if (v === 'variable') onChange({ ...a, listVar: '', items: undefined })
+            else onChange({ ...a, listVar: undefined, items: a.items ?? [''] })
+          }}
+          options={[
+            { value: 'items', label: t('script.chooseSourceItems') },
+            { value: 'variable', label: t('script.chooseSourceVariable') },
+          ]}
+          style={{ ...inp, minWidth: 60 }}
+        />
+        {useListVar ? (
+          <VariableInput
+            value={a.listVar ?? ''}
+            onChange={(v) => onChange({ ...a, listVar: v })}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            label={t('script.chooseListVar')}
+            placeholder={t('script.chooseListVar')}
+            style={{ ...inpField, flex: 1, minWidth: 60 }}
+          />
+        ) : (
+          <>
+            {(a.items ?? []).map((item, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <VariableInput
+                  value={item}
+                  onChange={(v) => {
+                    const next = [...(a.items ?? [])]
+                    next[i] = v
+                    onChange({ ...a, items: next })
+                  }}
+                  availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+                  placeholder={`#${i + 1}`}
+                  style={{ ...inpField, minWidth: 40 }}
+                />
+                {(a.items ?? []).length > 1 && (
+                  <button
+                    onClick={() => {
+                      const next = [...(a.items ?? [])]
+                      next.splice(i, 1)
+                      onChange({ ...a, items: next })
+                    }}
+                    style={{ background: 'none', border: 'none', color: 'var(--c-text-dim)', cursor: 'pointer', fontSize: 11, padding: '0 2px' }}
+                  >×</button>
+                )}
+              </div>
+            ))}
+            <button
+              onClick={() => onChange({ ...a, items: [...(a.items ?? []), ''] })}
+              style={{ background: 'none', border: '1px dashed var(--c-border)', borderRadius: 4, color: 'var(--c-text-secondary)', cursor: 'pointer', fontSize: 10, padding: '2px 6px' }}
+            >{t('script.chooseAddItem')}</button>
+          </>
+        )}
+        <label style={{ display: 'flex', alignItems: 'center', gap: 3, fontSize: 11, color: 'var(--c-text-secondary)', cursor: 'pointer' }}>
+          <input type="checkbox" checked={a.multiple ?? false} onChange={(e) => onChange({ ...a, multiple: e.target.checked })} style={{ margin: 0 }} />
+          {t('script.chooseMultiple')}
+        </label>
+        <VariableInput
+          value={a.resultVar}
+          onChange={(v) => onChange({ ...a, resultVar: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.labelResult')}
+          placeholder={t('script.calcResult')}
+          style={{ ...inpField, minWidth: 70 }}
+        />
+      </div>
+    )
+  }
+
+  // ── Show Alert ────────────────────────────────────────────────────────
+  if (action.type === 'show-alert') {
+    const a = action as ShowAlertAction
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <VariableInput
+          value={a.title ?? ''}
+          onChange={(v) => onChange({ ...a, title: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.alertTitle')}
+          placeholder={t('script.alertTitle')}
+          style={{ ...inpField, minWidth: 50 }}
+        />
+        <VariableInput
+          value={a.message ?? ''}
+          onChange={(v) => onChange({ ...a, message: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.alertMessage')}
+          placeholder={t('script.alertMessage')}
+          style={{ ...inpField, flex: 1, minWidth: 80 }}
+        />
+        <VariableInput
+          value={a.confirmText ?? ''}
+          onChange={(v) => onChange({ ...a, confirmText: v || undefined })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.alertConfirmText')}
+          placeholder={t('script.alertConfirmText')}
+          style={{ ...inpField, minWidth: 50 }}
+        />
+        <VariableInput
+          value={a.cancelText ?? ''}
+          onChange={(v) => onChange({ ...a, cancelText: v || undefined })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.alertCancelText')}
+          placeholder={t('script.alertCancelText')}
+          style={{ ...inpField, minWidth: 50 }}
+        />
+        <VariableInput
+          value={a.resultVar ?? ''}
+          onChange={(v) => onChange({ ...a, resultVar: v || undefined })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.labelResult')}
+          placeholder={t('script.calcResult')}
+          style={{ ...inpField, minWidth: 70 }}
+        />
+      </div>
+    )
+  }
+
+  // ── HTTP Request ─────────────────────────────────────────────────────────
+  if (action.type === 'http-request') {
+    const a = action as HttpRequestAction
+    const HTTP_METHODS: { value: HttpMethod; label: string }[] = [
+      { value: 'GET', label: 'GET' },
+      { value: 'POST', label: 'POST' },
+      { value: 'PUT', label: 'PUT' },
+      { value: 'DELETE', label: 'DELETE' },
+      { value: 'PATCH', label: 'PATCH' },
+      { value: 'HEAD', label: 'HEAD' },
+    ]
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <CustomSelect
+          value={a.method ?? 'GET'}
+          onChange={(v) => onChange({ ...a, method: v as HttpMethod })}
+          options={HTTP_METHODS.map((m) => ({ value: m.value, label: m.label }))}
+          style={{ ...inp, minWidth: 70 }}
+        />
+        <VariableInput
+          value={a.url ?? ''}
+          onChange={(v) => onChange({ ...a, url: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.httpUrl')}
+          placeholder={t('script.httpUrl')}
+          style={{ ...inpField, flex: 1, minWidth: 120 }}
+        />
+        {a.method !== 'GET' && a.method !== 'HEAD' && (
+          <VariableInput
+            value={a.body ?? ''}
+            onChange={(v) => onChange({ ...a, body: v })}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            label={t('script.httpBody')}
+            placeholder={t('script.httpBody')}
+            style={{ ...inpField, flex: 1, minWidth: 80 }}
+          />
+        )}
+        <VariableInput
+          value={a.headers ?? ''}
+          onChange={(v) => onChange({ ...a, headers: v || undefined })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.httpHeaders')}
+          placeholder={t('script.httpHeaders')}
+          style={{ ...inpField, minWidth: 80 }}
+        />
+        <VariableInput
+          value={a.timeout !== undefined ? String(a.timeout) : ''}
+          onChange={(v) => onChange({ ...a, timeout: v ? parseInt(v, 10) || undefined : undefined })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.httpTimeout')}
+          placeholder={t('script.httpTimeout')}
+          style={{ ...inpField, minWidth: 50, maxWidth: 80 }}
+        />
+        <VariableInput
+          value={a.resultVar ?? ''}
+          onChange={(v) => onChange({ ...a, resultVar: v || undefined })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.labelResult')}
+          placeholder={t('script.calcResult')}
+          style={{ ...inpField, minWidth: 70 }}
+        />
+        <VariableInput
+          value={a.statusVar ?? ''}
+          onChange={(v) => onChange({ ...a, statusVar: v || undefined })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.httpStatusVar')}
+          placeholder={t('script.httpStatusVar')}
+          style={{ ...inpField, minWidth: 60 }}
+        />
+      </div>
+    )
+  }
+
+  // ── File ────────────────────────────────────────────────────────────────────
+  if (action.type === 'file') {
+    const a = action as FileAction
+    const FILE_MODES: { value: FileMode; label: string }[] = [
+      { value: 'read',   label: t('script.fileModeRead') },
+      { value: 'write',  label: t('script.fileModeWrite') },
+      { value: 'exists', label: t('script.fileModeExists') },
+      { value: 'list',   label: t('script.fileModeList') },
+      { value: 'pick',   label: t('script.fileModePick') },
+      { value: 'info',   label: t('script.fileModeInfo') },
+      { value: 'delete', label: t('script.fileModeDelete') },
+      { value: 'rename', label: t('script.fileModeRename') },
+      { value: 'copy',   label: t('script.fileModeCopy') },
+    ]
+    const INFO_FIELDS: { value: FileInfoField; label: string }[] = [
+      { value: 'size',      label: t('script.fileInfoSize') },
+      { value: 'modified',  label: t('script.fileInfoModified') },
+      { value: 'created',   label: t('script.fileInfoCreated') },
+      { value: 'extension', label: t('script.fileInfoExtension') },
+      { value: 'name',      label: t('script.fileInfoName') },
+      { value: 'directory',  label: t('script.fileInfoDirectory') },
+    ]
+    const WRITE_MODES: { value: string; label: string }[] = [
+      { value: 'overwrite', label: t('script.fileWriteOverwrite') },
+      { value: 'append',    label: t('script.fileWriteAppend') },
+    ]
+    const PICK_MODES: { value: string; label: string }[] = [
+      { value: 'file',      label: t('script.filePickFile') },
+      { value: 'directory',  label: t('script.filePickDirectory') },
+    ]
+
+    const modeFields = (): JSX.Element | null => {
+      switch (a.mode) {
+        case 'read':
+          return (
+            <>
+              <VariableInput value={a.encoding ?? 'utf8'} onChange={(v) => onChange({ ...a, encoding: v || 'utf8' })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.fileEncoding')} placeholder={t('script.fileEncoding')} style={{ ...inpField, minWidth: 40, maxWidth: 60 }} />
+            </>
+          )
+        case 'write':
+          return (
+            <>
+              <VariableInput value={a.content ?? ''} onChange={(v) => onChange({ ...a, content: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.fileContent')} placeholder={t('script.fileContent')} style={{ ...inpField, flex: 1, minWidth: 80 }} />
+              <CustomSelect value={a.writeMode ?? 'overwrite'} onChange={(v) => onChange({ ...a, writeMode: v as 'overwrite' | 'append' })} options={WRITE_MODES.map((m) => ({ value: m.value, label: m.label }))} style={{ ...inp, minWidth: 70 }} />
+            </>
+          )
+        case 'exists':
+        case 'delete':
+          return null
+        case 'list':
+          return <VariableInput value={a.pattern ?? '*'} onChange={(v) => onChange({ ...a, pattern: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.filePattern')} placeholder={t('script.filePattern')} style={{ ...inpField, minWidth: 60 }} />
+        case 'pick':
+          return (
+            <>
+              <CustomSelect value={a.pickMode ?? 'file'} onChange={(v) => onChange({ ...a, pickMode: v as 'file' | 'directory' })} options={PICK_MODES.map((m) => ({ value: m.value, label: m.label }))} style={{ ...inp, minWidth: 60 }} />
+              <VariableInput value={a.title ?? ''} onChange={(v) => onChange({ ...a, title: v || undefined })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.filePickTitle')} placeholder={t('script.filePickTitle')} style={{ ...inpField, minWidth: 60 }} />
+              <VariableInput value={a.filters ?? ''} onChange={(v) => onChange({ ...a, filters: v || undefined })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.fileFilters')} placeholder={t('script.fileFilters')} style={{ ...inpField, minWidth: 60 }} />
+            </>
+          )
+        case 'info':
+          return <CustomSelect value={a.infoField ?? 'size'} onChange={(v) => onChange({ ...a, infoField: v as FileInfoField })} options={INFO_FIELDS.map((m) => ({ value: m.value, label: m.label }))} style={{ ...inp, minWidth: 70 }} />
+        case 'rename':
+        case 'copy':
+          return <VariableInput value={a.destination ?? ''} onChange={(v) => onChange({ ...a, destination: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.fileDestination')} placeholder={t('script.fileDestination')} style={{ ...inpField, flex: 1, minWidth: 80 }} />
+        default:
+          return null
+      }
+    }
+
+    const needsPath = a.mode !== 'pick'
+    const needsResult = a.mode !== 'write' && a.mode !== 'delete'
+
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <CustomSelect
+          value={a.mode}
+          onChange={(v) => onChange({ ...a, mode: v as FileMode })}
+          options={FILE_MODES.map((m) => ({ value: m.value, label: m.label }))}
+          style={{ ...inp, minWidth: 60 }}
+        />
+        {needsPath && (
+          <VariableInput
+            value={a.path ?? ''}
+            onChange={(v) => onChange({ ...a, path: v })}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            label={t('script.filePath')}
+            placeholder={t('script.filePath')}
+            style={{ ...inpField, flex: 1, minWidth: 80 }}
+          />
+        )}
+        {modeFields()}
+        {needsResult && (
+          <VariableInput
+            value={a.resultVar ?? ''}
+            onChange={(v) => onChange({ ...a, resultVar: v || undefined })}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+            label={t('script.labelResult')}
+            placeholder={t('script.calcResult')}
+            style={{ ...inpField, minWidth: 70 }}
+          />
+        )}
+      </div>
+    )
+  }
+
+  // ── Date-Time ──────────────────────────────────────────────────────────────
+  if (action.type === 'date-time') {
+    const a = action as DateTimeAction
+    const DT_MODES: { value: DateTimeMode; label: string }[] = [
+      { value: 'now',    label: t('script.dtModeNow') },
+      { value: 'format', label: t('script.dtModeFormat') },
+      { value: 'math',   label: t('script.dtModeMath') },
+      { value: 'diff',   label: t('script.dtModeDiff') },
+      { value: 'parse',  label: t('script.dtModeParse') },
+    ]
+    const DT_UNITS: { value: DateTimeUnit; label: string }[] = [
+      { value: 'years',        label: t('script.dtUnitYears') },
+      { value: 'months',       label: t('script.dtUnitMonths') },
+      { value: 'days',         label: t('script.dtUnitDays') },
+      { value: 'hours',        label: t('script.dtUnitHours') },
+      { value: 'minutes',      label: t('script.dtUnitMinutes') },
+      { value: 'seconds',      label: t('script.dtUnitSeconds') },
+      { value: 'milliseconds', label: t('script.dtUnitMs') },
+    ]
+
+    const modeFields = (): JSX.Element | null => {
+      switch (a.mode) {
+        case 'now':
+          return (
+            <VariableInput value={a.format ?? 'iso'} onChange={(v) => onChange({ ...a, format: v || 'iso' })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.dtFormat')} placeholder={t('script.dtFormat')} style={{ ...inpField, minWidth: 50, maxWidth: 80 }} />
+          )
+        case 'format':
+          return (
+            <>
+              <VariableInput value={a.input ?? ''} onChange={(v) => onChange({ ...a, input: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.dtInput')} placeholder={t('script.dtInput')} style={{ ...inpField, flex: 1, minWidth: 80 }} />
+              <VariableInput value={a.format ?? 'iso'} onChange={(v) => onChange({ ...a, format: v || 'iso' })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.dtFormat')} placeholder={t('script.dtFormat')} style={{ ...inpField, minWidth: 50, maxWidth: 80 }} />
+            </>
+          )
+        case 'math':
+          return (
+            <>
+              <VariableInput value={a.input ?? ''} onChange={(v) => onChange({ ...a, input: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.dtInput')} placeholder={t('script.dtInput')} style={{ ...inpField, flex: 1, minWidth: 80 }} />
+              <VariableInput value={a.amount !== undefined ? String(a.amount) : ''} onChange={(v) => onChange({ ...a, amount: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.dtAmount')} placeholder={t('script.dtAmount')} style={{ ...inpField, minWidth: 40, maxWidth: 60 }} />
+              <CustomSelect value={a.unit ?? 'days'} onChange={(v) => onChange({ ...a, unit: v as DateTimeUnit })} options={DT_UNITS.map((u) => ({ value: u.value, label: u.label }))} style={{ ...inp, minWidth: 60 }} />
+            </>
+          )
+        case 'diff':
+          return (
+            <>
+              <VariableInput value={a.date1 ?? ''} onChange={(v) => onChange({ ...a, date1: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.dtDate1')} placeholder={t('script.dtDate1')} style={{ ...inpField, flex: 1, minWidth: 80 }} />
+              <VariableInput value={a.date2 ?? ''} onChange={(v) => onChange({ ...a, date2: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.dtDate2')} placeholder={t('script.dtDate2')} style={{ ...inpField, flex: 1, minWidth: 80 }} />
+              <CustomSelect value={a.unit ?? 'milliseconds'} onChange={(v) => onChange({ ...a, unit: v as DateTimeUnit })} options={DT_UNITS.map((u) => ({ value: u.value, label: u.label }))} style={{ ...inp, minWidth: 60 }} />
+            </>
+          )
+        case 'parse':
+          return (
+            <VariableInput value={a.input ?? ''} onChange={(v) => onChange({ ...a, input: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.dtInput')} placeholder={t('script.dtInput')} style={{ ...inpField, flex: 1, minWidth: 80 }} />
+          )
+        default:
+          return null
+      }
+    }
+
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <CustomSelect
+          value={a.mode}
+          onChange={(v) => onChange({ ...a, mode: v as DateTimeMode })}
+          options={DT_MODES.map((m) => ({ value: m.value, label: m.label }))}
+          style={{ ...inp, minWidth: 60 }}
+        />
+        {modeFields()}
+        <VariableInput
+          value={a.resultVar ?? ''}
+          onChange={(v) => onChange({ ...a, resultVar: v })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.labelResult')}
+          placeholder={t('script.calcResult')}
+          style={{ ...inpField, minWidth: 70 }}
+        />
+      </div>
+    )
+  }
+
+  // ── Try-Catch (inline fields: just errorVar) ─────────────────────────────
+  if (action.type === 'try-catch') {
+    const a = action as TryCatchAction
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <VariableInput
+          value={a.errorVar ?? ''}
+          onChange={(v) => onChange({ ...a, errorVar: v || undefined })}
+          availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+          label={t('script.errorVar')}
+          placeholder={t('script.errorVar')}
+          style={{ ...inpField, minWidth: 70 }}
+        />
+      </div>
+    )
+  }
+
+  // ── Registry ─────────────────────────────────────────────────────────────
+  if (action.type === 'registry') {
+    const a = action as RegistryAction
+    const REG_MODES: { value: RegistryMode; label: string }[] = [
+      { value: 'read',   label: t('script.regModeRead') },
+      { value: 'write',  label: t('script.regModeWrite') },
+      { value: 'delete', label: t('script.regModeDelete') },
+      { value: 'exists', label: t('script.regModeExists') },
+    ]
+    const HIVES: { value: RegistryHive; label: string }[] = [
+      { value: 'HKCU', label: 'HKCU' },
+      { value: 'HKLM', label: 'HKLM' },
+      { value: 'HKCR', label: 'HKCR' },
+      { value: 'HKU',  label: 'HKU' },
+      { value: 'HKCC', label: 'HKCC' },
+    ]
+    const DATA_TYPES: { value: RegistryDataType; label: string }[] = [
+      { value: 'REG_SZ',        label: 'REG_SZ' },
+      { value: 'REG_DWORD',     label: 'REG_DWORD' },
+      { value: 'REG_QWORD',     label: 'REG_QWORD' },
+      { value: 'REG_EXPAND_SZ', label: 'REG_EXPAND_SZ' },
+      { value: 'REG_MULTI_SZ',  label: 'REG_MULTI_SZ' },
+    ]
+    const needsResult = a.mode === 'read' || a.mode === 'exists'
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <CustomSelect value={a.mode} onChange={(v) => onChange({ ...a, mode: v as RegistryMode })} options={REG_MODES.map((m) => ({ value: m.value, label: m.label }))} style={{ ...inp, minWidth: 60 }} />
+        <CustomSelect value={a.hive ?? 'HKCU'} onChange={(v) => onChange({ ...a, hive: v as RegistryHive })} options={HIVES.map((h) => ({ value: h.value, label: h.label }))} style={{ ...inp, minWidth: 55 }} />
+        <VariableInput value={a.keyPath ?? ''} onChange={(v) => onChange({ ...a, keyPath: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.regKeyPath')} placeholder={t('script.regKeyPath')} style={{ ...inpField, flex: 1, minWidth: 100 }} />
+        <VariableInput value={a.valueName ?? ''} onChange={(v) => onChange({ ...a, valueName: v || undefined })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.regValueName')} placeholder={t('script.regValueName')} style={{ ...inpField, minWidth: 70 }} />
+        {a.mode === 'write' && (
+          <>
+            <VariableInput value={a.data ?? ''} onChange={(v) => onChange({ ...a, data: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.regData')} placeholder={t('script.regData')} style={{ ...inpField, flex: 1, minWidth: 60 }} />
+            <CustomSelect value={a.dataType ?? 'REG_SZ'} onChange={(v) => onChange({ ...a, dataType: v as RegistryDataType })} options={DATA_TYPES.map((d) => ({ value: d.value, label: d.label }))} style={{ ...inp, minWidth: 80 }} />
+          </>
+        )}
+        {needsResult && (
+          <VariableInput value={a.resultVar ?? ''} onChange={(v) => onChange({ ...a, resultVar: v || undefined })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.labelResult')} placeholder={t('script.calcResult')} style={{ ...inpField, minWidth: 70 }} />
+        )}
+      </div>
+    )
+  }
+
+  // ── Environment ─────────────────────────────────────────────────────────
+  if (action.type === 'environment') {
+    const a = action as EnvironmentAction
+    const ENV_MODES: { value: EnvironmentMode; label: string }[] = [
+      { value: 'get',  label: t('script.envModeGet') },
+      { value: 'set',  label: t('script.envModeSet') },
+      { value: 'list', label: t('script.envModeList') },
+    ]
+    const needsName = a.mode === 'get' || a.mode === 'set'
+    const needsResult = a.mode === 'get' || a.mode === 'list'
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <CustomSelect value={a.mode ?? 'get'} onChange={(v) => onChange({ ...a, mode: v as EnvironmentMode })} options={ENV_MODES.map((m) => ({ value: m.value, label: m.label }))} style={{ ...inp, minWidth: 55 }} />
+        {needsName && (
+          <VariableInput value={a.name ?? ''} onChange={(v) => onChange({ ...a, name: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.envName')} placeholder={t('script.envName')} style={{ ...inpField, flex: 1, minWidth: 80 }} />
+        )}
+        {a.mode === 'set' && (
+          <VariableInput value={a.value ?? ''} onChange={(v) => onChange({ ...a, value: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.envValue')} placeholder={t('script.envValue')} style={{ ...inpField, flex: 1, minWidth: 80 }} />
+        )}
+        {needsResult && (
+          <VariableInput value={a.resultVar ?? ''} onChange={(v) => onChange({ ...a, resultVar: v || undefined })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.labelResult')} placeholder={t('script.calcResult')} style={{ ...inpField, minWidth: 70 }} />
+        )}
+      </div>
+    )
+  }
+
+  // ── Service ─────────────────────────────────────────────────────────────
+  if (action.type === 'service') {
+    const a = action as ServiceAction
+    const SVC_MODES: { value: ServiceMode; label: string }[] = [
+      { value: 'status',  label: t('script.svcModeStatus') },
+      { value: 'start',   label: t('script.svcModeStart') },
+      { value: 'stop',    label: t('script.svcModeStop') },
+      { value: 'restart', label: t('script.svcModeRestart') },
+    ]
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+        <CustomSelect value={a.mode ?? 'status'} onChange={(v) => onChange({ ...a, mode: v as ServiceMode })} options={SVC_MODES.map((m) => ({ value: m.value, label: m.label }))} style={{ ...inp, minWidth: 60 }} />
+        <VariableInput value={a.serviceName ?? ''} onChange={(v) => onChange({ ...a, serviceName: v })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.svcName')} placeholder={t('script.svcName')} style={{ ...inpField, flex: 1, minWidth: 100 }} />
+        <VariableInput value={a.resultVar ?? ''} onChange={(v) => onChange({ ...a, resultVar: v || undefined })} availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} label={t('script.labelResult')} placeholder={t('script.calcResult')} style={{ ...inpField, minWidth: 70 }} />
+      </div>
+    )
+  }
+
+  // Comment — header-only (no inline fields); card body (textarea) rendered in SortableNode
+  if (action.type === 'comment') {
+    return null
   }
 
   return <></>
@@ -2656,6 +3664,137 @@ function NestedNodeCard({
     )
   }
 
+  // ── Nested try-catch: card header + recursive try/catch branches ──
+  if (action.type === 'try-catch') {
+    const a = action as TryCatchAction
+    const color = cfg.color
+    return (
+      <div>
+        <div style={{
+          borderRadius: 8, background: 'var(--c-node-bg)',
+          border: '1px solid var(--c-border)', borderLeft: `3px solid ${color}`,
+          padding: '8px 12px',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {iconLabel}
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexWrap: 'wrap' }} onPointerDown={(e) => e.stopPropagation()}>
+              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} currentEntryId={currentEntryId} availableVars={availableVars} availableVarInfos={availableVarInfos} />
+            </div>
+            {deleteBtn}
+          </div>
+        </div>
+        <div style={{ paddingLeft: 6 }} onPointerDown={(e) => e.stopPropagation()}>
+          {/* TRY */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 2px 0' }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.9, textTransform: 'uppercase', flexShrink: 0 }}>{t('script.tryLabel')}</span>
+            <div style={{ flex: 1, height: 1, background: `${color}44` }} />
+          </div>
+          <NestedActionListSimple
+            color={color}
+            actions={a.tryActions}
+            onChange={(acts) => onChange({ ...a, tryActions: acts })}
+            nodeStyle={nodeStyle}
+            library={library}
+            currentEntryId={currentEntryId}
+            depth={depth + 1}
+            branchId={nestedPath ? `${nestedPath}:try` : `branch:nested-${depth}:try`}
+          />
+          {/* CATCH */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 2px 0' }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color: '#ef4444', letterSpacing: '0.08em', opacity: 0.9, textTransform: 'uppercase', flexShrink: 0 }}>{t('script.catchLabel')}</span>
+            <div style={{ flex: 1, height: 1, background: 'rgba(239,68,68,0.3)' }} />
+          </div>
+          <NestedActionListSimple
+            color="#ef4444"
+            actions={a.catchActions}
+            onChange={(acts) => onChange({ ...a, catchActions: acts })}
+            nodeStyle={nodeStyle}
+            library={library}
+            currentEntryId={currentEntryId}
+            depth={depth + 1}
+            branchId={nestedPath ? `${nestedPath}:catch` : `branch:nested-${depth}:catch`}
+          />
+          {/* END TRY */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 0 0 0' }}>
+            <span style={{ fontSize: 9, fontWeight: 700, color, letterSpacing: '0.08em', opacity: 0.6, textTransform: 'uppercase', flexShrink: 0 }}>{t('script.tryCatchEnd')}</span>
+            <div style={{ flex: 1, height: 1, background: `${color}22` }} />
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Nested toast — title in header, body below divider ──
+  if (action.type === 'toast') {
+    const a = action as ToastAction
+    const color = cfg.color
+    return (
+      <div style={{
+        borderRadius: 8, background: 'var(--c-node-bg)',
+        border: '1px solid var(--c-border)', borderLeft: `3px solid ${color}`,
+        padding: '8px 12px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {iconLabel}
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, minWidth: 0, flexWrap: 'wrap' }} onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} currentEntryId={currentEntryId} availableVars={availableVars} availableVarInfos={availableVarInfos} />
+          </div>
+          {deleteBtn}
+        </div>
+        <div style={{ height: 1, background: `${color}33`, margin: '7px 0' }} />
+        <div onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+          <VariableInput
+            value={a.message}
+            onChange={(v) => onChange({ ...a, message: v })}
+            availableVars={availableVars ?? []} availableVarInfos={availableVarInfos}
+            label={t('script.toastBody')}
+            placeholder={t('script.toastBody')}
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              background: 'var(--c-accent-bg)', border: '1px solid var(--c-accent-border)',
+              borderRadius: 6, color: 'var(--c-accent)', padding: '4px 8px',
+              fontSize: 12, fontFamily: 'inherit', fontWeight: 600,
+              outline: 'none',
+            }}
+          />
+        </div>
+      </div>
+    )
+  }
+
+  // ── Nested comment — dashed border, textarea below divider ──
+  if (action.type === 'comment') {
+    const a = action as CommentAction
+    return (
+      <div style={{
+        borderRadius: 8, background: 'var(--c-node-bg)',
+        border: '1px dashed var(--c-border)',
+        padding: '8px 12px', opacity: 0.7,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {iconLabel}
+          <div style={{ flex: 1 }} />
+          {deleteBtn}
+        </div>
+        <div style={{ height: 1, background: 'var(--c-border)', margin: '7px 0', opacity: 0.5 }} />
+        <div onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+          <textarea
+            value={a.text}
+            onChange={(e) => onChange({ ...a, text: e.target.value })}
+            rows={3}
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              background: 'var(--c-accent-bg)', border: '1px solid var(--c-accent-border)',
+              borderRadius: 6, color: 'var(--c-text)', padding: '6px 8px',
+              fontSize: 12, fontFamily: 'inherit', fontStyle: 'italic',
+              outline: 'none', resize: 'vertical', lineHeight: 1.5,
+            }}
+          />
+        </div>
+      </div>
+    )
+  }
+
   // ── Default flat node ──
   return (
     <div
@@ -2856,6 +3995,11 @@ const SOURCE_ICON_MAP: Record<string, string> = {
   'stop': 'stop',
   'mouse-move': 'mouse_move',
   'mouse-click': 'mouse_click',
+  'clipboard': 'clipboard',
+  'text': 'text_fields',
+  'transform': 'transform',
+  'http-request': 'http_request',
+  'file': 'file_action',
 }
 
 // ── SortableNode ───────────────────────────────────────────────────────────────
@@ -3097,6 +4241,39 @@ function SortableNode({ node, nodeIndex, nodeStyle, onChange, onDelete, errorMsg
     )
   }
 
+  // ── Try-Catch node — external try/catch structure ───────────────────────────
+  if (action.type === 'try-catch') {
+    const a = action as TryCatchAction
+    return (
+      <div ref={combinedRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : isGhost ? 0.45 : 1, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
+        <div style={{ ...cardStyle, ...(isGhost ? { borderStyle: 'dashed' } : undefined) }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {dragHandle}
+            <div
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, flexWrap: 'wrap' }}
+            >
+              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} groups={groups} resourceIcons={resourceIcons} currentEntryId={currentEntryId} availableVars={availableVars} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} />
+            </div>
+            {deleteBtn}
+          </div>
+        </div>
+        <div
+          onPointerDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <TryCatchBranchesExternal action={a} onChange={onChange} nodeStyle={nodeStyle} library={library} nodeId={node._id} currentEntryId={currentEntryId} />
+        </div>
+        {returnValues && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            {returnValues.map((rv) => (
+              <ReturnValueChip key={rv.ref} rv={rv} nodeColor={cfg.color} nodeId={node._id} />
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   // ── List node — define mode ────────────────────────────────────────────────────
   if (action.type === 'list' && (action as ListAction).mode !== 'edit') {
     const a = action as ListAction
@@ -3285,19 +4462,77 @@ function SortableNode({ node, nodeIndex, nodeStyle, onChange, onDelete, errorMsg
     )
   }
 
-  // ── Comment node — dimmed, no drag handle grab style ──────────────────────────
+  // ── Toast node — title in header, body textarea below divider ────────────────
+  if (action.type === 'toast') {
+    const a = action as ToastAction
+    return (
+      <div ref={combinedRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : isGhost ? 0.45 : 1, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
+        <div style={{ ...cardStyle, ...(isGhost ? { borderStyle: 'dashed' } : undefined) }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            {dragHandle}
+            <div
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6, minWidth: 0, flexWrap: 'wrap' }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
+              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} groups={groups} resourceIcons={resourceIcons} currentEntryId={currentEntryId} availableVars={availableVars} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} />
+            </div>
+            {deleteBtn}
+          </div>
+          <div style={{ height: 1, background: `${cfg.color}33`, margin: '7px 0' }} />
+          <div onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <VariableInput
+              value={a.message}
+              onChange={(v) => onChange({ ...a, message: v })}
+              availableVars={availableVars ?? []} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex}
+              label={t('script.toastBody')}
+              placeholder={t('script.toastBody')}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: 'var(--c-accent-bg)', border: '1px solid var(--c-accent-border)',
+                borderRadius: 6, color: 'var(--c-accent)', padding: '4px 8px',
+                fontSize: 12, fontFamily: 'inherit', fontWeight: 600,
+                outline: 'none',
+              }}
+            />
+          </div>
+        </div>
+        {returnValues && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            {returnValues.map((rv) => (
+              <ReturnValueChip key={rv.ref} rv={rv} nodeColor={nodeColor} nodeId={node._id} />
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  // ── Comment node — dimmed, dashed border, multi-line textarea below divider ──
   if (action.type === 'comment') {
+    const a = action as CommentAction
     return (
       <div ref={combinedRef} {...attributes} {...listeners} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.3 : isGhost ? 0.45 : 0.7, cursor: isDragging ? 'grabbing' : 'grab', touchAction: 'none' }}>
         <div style={{ ...cardStyle, borderStyle: 'dashed', borderColor: 'var(--c-border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             {dragHandle}
-            <div
-              style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}
-            >
-              <InlineNodeFields action={action} onChange={onChange} nodeStyle={nodeStyle} library={library} groups={groups} resourceIcons={resourceIcons} currentEntryId={currentEntryId} availableVars={availableVars} availableVarInfos={availableVarInfos} nodeIndex={nodeIndex} />
-            </div>
+            <div style={{ flex: 1 }} />
             {deleteBtn}
+          </div>
+          <div style={{ height: 1, background: 'var(--c-border)', margin: '7px 0', opacity: 0.5 }} />
+          <div onPointerDown={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            <textarea
+              value={a.text}
+              onChange={(e) => onChange({ ...a, text: e.target.value })}
+              rows={3}
+              style={{
+                width: '100%', boxSizing: 'border-box',
+                background: 'var(--c-accent-bg)', border: '1px solid var(--c-accent-border)',
+                borderRadius: 6, color: 'var(--c-text)', padding: '6px 8px',
+                fontSize: 12, fontFamily: 'inherit', fontStyle: 'italic',
+                outline: 'none', resize: 'vertical', lineHeight: 1.5,
+              }}
+            />
           </div>
         </div>
       </div>
@@ -3709,13 +4944,22 @@ function ToolbarSep(): JSX.Element {
 
 export class ErrorBoundary extends Component<
   { children: ReactNode; language?: Language },
-  { error: Error | null }
+  { error: Error | null; componentStack: string | null }
 > {
-  state = { error: null }
+  state: { error: Error | null; componentStack: string | null } = { error: null, componentStack: null }
   static getDerivedStateFromError(error: Error) { return { error } }
+  componentDidCatch(error: Error, info: { componentStack?: string }) {
+    this.setState({ componentStack: info.componentStack ?? null })
+  }
   render() {
     if (this.state.error) {
       const err = this.state.error as Error
+      const language = this.props.language ?? 'en'
+      const btnStyle: React.CSSProperties = {
+        padding: '5px 14px', borderRadius: 6, border: '1px solid #45475a',
+        background: '#313244', color: '#cdd6f4', fontSize: 12,
+        cursor: 'pointer', fontFamily: 'inherit',
+      }
       return (
         <div style={{
           padding: 24, color: 'var(--c-danger, #ff6060)',
@@ -3723,7 +4967,22 @@ export class ErrorBoundary extends Component<
           whiteSpace: 'pre-wrap', overflowY: 'auto',
           height: '100vh', background: 'var(--c-surface, #21262d)',
         }}>
-          <strong>Render error</strong>{'\n\n'}{err.message}{'\n\n'}{err.stack}
+          <strong>{language === 'ko' ? '렌더링 오류' : 'Render error'}</strong>{'\n\n'}{err.message}{'\n\n'}{err.stack}
+          <div style={{ marginTop: 16, display: 'flex', gap: 6 }}>
+            <button style={btnStyle} onClick={() => this.setState({ error: null, componentStack: null })}>
+              {language === 'ko' ? '복구 시도' : 'Try to recover'}
+            </button>
+            <button style={btnStyle} onClick={() => window.shortcutsAPI.showErrorLog({
+              message: err.message,
+              stack: err.stack ?? '',
+              componentStack: this.state.componentStack ?? undefined,
+            })}>
+              {language === 'ko' ? '에러 로그 확인' : 'View error log'}
+            </button>
+            <button style={{ ...btnStyle, color: '#ff6060' }} onClick={() => window.shortcutsAPI.restartApp()}>
+              {language === 'ko' ? '프로그램 재시작' : 'Restart app'}
+            </button>
+          </div>
         </div>
       )
     }
@@ -3733,29 +4992,36 @@ export class ErrorBoundary extends Component<
 
 // ── WorkspaceDropZone ──────────────────────────────────────────────────────────
 
-function WorkspaceDropZone({ children, style, isLibDrag, hasNodes }: { children: ReactNode; style?: React.CSSProperties; isLibDrag?: boolean; hasNodes?: boolean }): JSX.Element {
-  const { setNodeRef, isOver } = useDroppable({ id: 'workspace' })
-  // Only show the workspace border highlight when the list is empty (valid empty-drop target).
-  // When nodes exist the per-item ghost indicators provide visual feedback instead.
-  const showBorder = isLibDrag && !hasNodes
-  return (
-    <div
-      ref={setNodeRef}
-      style={{
-        ...style,
-        boxShadow: showBorder
-          ? isOver
-            ? 'inset 0 0 0 2px var(--c-accent)'
-            : 'inset 0 0 0 2px rgba(255,255,255,0.07)'
-          : undefined,
-        borderRadius: 10,
-        transition: 'box-shadow 0.15s',
-      }}
-    >
-      {children}
-    </div>
-  )
-}
+const WorkspaceDropZone = React.forwardRef<HTMLDivElement, { children: ReactNode; style?: React.CSSProperties; isLibDrag?: boolean; hasNodes?: boolean }>(
+  function WorkspaceDropZone({ children, style, isLibDrag, hasNodes }, forwardedRef) {
+    const { setNodeRef, isOver } = useDroppable({ id: 'workspace' })
+    const combinedRef = useCallback((el: HTMLDivElement | null) => {
+      setNodeRef(el)
+      if (typeof forwardedRef === 'function') forwardedRef(el)
+      else if (forwardedRef) (forwardedRef as React.MutableRefObject<HTMLDivElement | null>).current = el
+    }, [setNodeRef, forwardedRef])
+    // Only show the workspace border highlight when the list is empty (valid empty-drop target).
+    // When nodes exist the per-item ghost indicators provide visual feedback instead.
+    const showBorder = isLibDrag && !hasNodes
+    return (
+      <div
+        ref={combinedRef}
+        style={{
+          ...style,
+          boxShadow: showBorder
+            ? isOver
+              ? 'inset 0 0 0 2px var(--c-accent)'
+              : 'inset 0 0 0 2px rgba(255,255,255,0.07)'
+            : undefined,
+          borderRadius: 10,
+          transition: 'box-shadow 0.15s',
+        }}
+      >
+        {children}
+      </div>
+    )
+  }
+)
 
 // ── DeleteDropZone — palette wrapper that acts as a deletion target ────────────
 
@@ -3988,275 +5254,6 @@ function SubCategoryHeader({ label, first }: { label: string; first?: boolean })
   )
 }
 
-// ── IconColorPopover ───────────────────────────────────────────────────────────
-
-interface IconColorPopoverProps {
-  pos: { top: number; left: number }
-  slot: SlotConfig
-  resourceIcons: ResourceIconEntry[]
-  recentColors: string[]
-  onSelectIcon: (entry: ResourceIconEntry) => void
-  onSelectBuiltinIcon: (iconName: string) => void
-  onSelectBgColor: (color: string | undefined) => void
-  onClose: () => void
-  anchorRef?: React.RefObject<HTMLElement>
-}
-
-function IconColorPopover({
-  pos, slot, resourceIcons, recentColors,
-  onSelectIcon, onSelectBuiltinIcon, onSelectBgColor, onClose, anchorRef,
-}: IconColorPopoverProps): JSX.Element {
-  const popoverRef = useRef<HTMLDivElement>(null)
-  const [tab, setTab] = useState<'icon' | 'color'>('icon')
-  const [search, setSearch] = useState('')
-  const [customColorOpen, setCustomColorOpen] = useState(false)
-  const [customColor, setCustomColor] = useState(slot.bgColor ?? '#3a3f4b')
-  const [clampedPos, setClampedPos] = useState(pos)
-
-  useLayoutEffect(() => {
-    if (popoverRef.current) setClampedPos(clampMenuPosition(popoverRef.current, pos))
-  }, [pos])
-
-  // Close on outside click (deferred to avoid closing immediately on open)
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (
-        popoverRef.current && !popoverRef.current.contains(e.target as Node) &&
-        !(anchorRef?.current && anchorRef.current.contains(e.target as Node))
-      ) {
-        onClose()
-      }
-    }
-    const timer = setTimeout(() => document.addEventListener('mousedown', handler), 0)
-    return () => { clearTimeout(timer); document.removeEventListener('mousedown', handler) }
-  }, [onClose, anchorRef])
-
-  const POPUP_WIDTH = 268
-  const PADDING = 12
-
-  const filteredBuiltin = search.trim()
-    ? BUILTIN_ICONS.filter((ic) => ic.label.toLowerCase().includes(search.toLowerCase()))
-    : BUILTIN_ICONS
-
-  const filteredResource = search.trim()
-    ? resourceIcons.filter((e) => e.name.toLowerCase().includes(search.toLowerCase()))
-    : resourceIcons
-
-  return (
-    <div
-      ref={popoverRef}
-      style={{
-        position: 'fixed',
-        top: clampedPos.top,
-        left: clampedPos.left,
-        width: POPUP_WIDTH,
-        maxHeight: '80vh',
-        background: 'var(--c-surface)',
-        border: '1px solid var(--c-border)',
-        borderRadius: 12,
-        boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        zIndex: 9000,
-      }}
-    >
-      {/* ── Tab bar: Icon | Color ── */}
-      <div style={{ display: 'flex', padding: '8px 10px 6px', flexShrink: 0, gap: 4 }}>
-        {(['icon', 'color'] as const).map((m) => (
-          <button
-            key={m}
-            onClick={() => setTab(m)}
-            style={{
-              flex: 1, padding: '5px 0', borderRadius: 6,
-              border: tab === m ? '1px solid var(--c-accent-border)' : '1px solid transparent',
-              background: tab === m ? 'var(--c-accent-bg)' : 'var(--c-elevated)',
-              color: tab === m ? 'var(--c-accent)' : 'var(--c-text-muted)',
-              fontSize: 11, fontWeight: tab === m ? 600 : 400,
-              cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.12s',
-            }}
-          >
-            {m === 'icon' ? 'Icon' : 'Color'}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'color' ? (
-        /* ── Color Section ── */
-        <div style={{ padding: `4px ${PADDING}px ${PADDING}px`, display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${PICKER_COLS}, ${PICKER_BTN}px)`, gap: PICKER_GAP, justifyContent: 'center', marginBottom: 8 }}>
-            {/* Auto/None swatch */}
-            <button
-              onClick={() => onSelectBgColor(undefined)}
-              title="Auto (theme default)"
-              style={{
-                width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                border: `2px solid ${slot.bgColor === undefined ? 'var(--c-accent)' : 'var(--c-border)'}`,
-                background: 'var(--c-elevated)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                padding: 0, color: 'var(--c-text-dim)', fontSize: 9, fontWeight: 600,
-              }}
-            >auto</button>
-
-            {/* Preset color swatches */}
-            {PRESET_BG_COLORS.map((color) => (
-              <button
-                key={color}
-                onClick={() => onSelectBgColor(color)}
-                title={color}
-                style={{
-                  width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                  border: '2px solid transparent',
-                  outline: slot.bgColor === color ? `2px solid ${color}` : 'none',
-                  outlineOffset: 2,
-                  background: color,
-                  padding: 0,
-                }}
-              />
-            ))}
-
-            {/* Custom color picker trigger */}
-            <button
-              onClick={() => setCustomColorOpen((v) => !v)}
-              title="Custom color…"
-              style={{
-                width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                border: `2px solid ${customColorOpen ? 'var(--c-accent)' : 'transparent'}`,
-                background: 'conic-gradient(from 0deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #8b5cf6, #ec4899, #ef4444)',
-                padding: 0,
-              }}
-            />
-          </div>
-
-          {/* Inline HexColorPicker */}
-          {customColorOpen && (
-            <div style={{ marginBottom: 8 }}>
-              <HexColorPicker
-                color={customColor}
-                onChange={(c) => { setCustomColor(c); onSelectBgColor(c) }}
-                style={{ width: '100%', height: 150 }}
-              />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
-                <input
-                  value={customColor}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    if (/^#[0-9a-fA-F]{0,6}$/.test(v)) {
-                      setCustomColor(v)
-                      if (v.length === 7) onSelectBgColor(v)
-                    }
-                  }}
-                  style={{
-                    flex: 1,
-                    background: 'var(--c-surface)', border: '1px solid var(--c-border)',
-                    borderRadius: 5, color: 'var(--c-text)', padding: '4px 8px',
-                    fontSize: 11, fontFamily: 'monospace', outline: 'none',
-                    boxSizing: 'border-box' as const,
-                  }}
-                />
-                {slot.bgColor && (
-                  <button
-                    onClick={() => onSelectBgColor(undefined)}
-                    title="Reset to theme default"
-                    style={{
-                      background: 'none', border: 'none', cursor: 'pointer',
-                      color: 'var(--c-text-dim)', padding: 2, borderRadius: 4,
-                      display: 'flex', alignItems: 'center',
-                    }}
-                  >
-                    <UIIcon name="close" size={13} />
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Recently used colors */}
-          {recentColors.length > 0 && (
-            <div>
-              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--c-text-dim)', fontWeight: 600, marginBottom: 6 }}>
-                Recent
-              </div>
-              <div style={{ display: 'flex', gap: PICKER_GAP, flexWrap: 'wrap' }}>
-                {recentColors.slice(0, PICKER_COLS * 2).map((color) => (
-                  <button
-                    key={color}
-                    onClick={() => onSelectBgColor(color)}
-                    title={color}
-                    style={{
-                      width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                      border: '2px solid transparent',
-                      outline: slot.bgColor === color ? `2px solid ${color}` : 'none',
-                      outlineOffset: 2,
-                      background: color,
-                      padding: 0, flexShrink: 0,
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      ) : (
-        /* ── Icon Section ── */
-        <>
-          <div style={{ padding: `0 ${PADDING}px 6px`, flexShrink: 0 }}>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search icons…"
-              style={{
-                width: '100%', background: 'var(--c-surface)',
-                border: '1px solid var(--c-border)', borderRadius: 6,
-                color: 'var(--c-text)', padding: '4px 8px',
-                fontSize: 11, fontFamily: 'inherit', outline: 'none',
-                boxSizing: 'border-box' as const,
-              }}
-            />
-          </div>
-
-          {/* Scrollable icon grid */}
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: `0 ${PADDING}px ${PADDING}px` }}>
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, ${PICKER_BTN}px)`, gap: PICKER_GAP, justifyContent: 'center' }}>
-              {filteredBuiltin.map((ic) => (
-                <button
-                  key={ic.name}
-                  onClick={() => onSelectBuiltinIcon(ic.name)}
-                  title={ic.label}
-                  style={{
-                    width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                    border: `2px solid ${!slot.iconIsCustom && slot.icon === ic.name ? 'var(--c-accent)' : 'transparent'}`,
-                    background: !slot.iconIsCustom && slot.icon === ic.name ? 'var(--c-btn-active)' : 'var(--c-elevated)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: 'var(--c-text)', padding: 0,
-                  }}
-                >
-                  <SVGIcon svgString={ic.svg} size={18} />
-                </button>
-              ))}
-              {filteredResource.map((entry) => (
-                <button
-                  key={entry.filename}
-                  onClick={() => onSelectIcon(entry)}
-                  title={entry.name}
-                  style={{
-                    width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                    border: `2px solid ${slot.iconIsCustom && slot.icon === entry.absPath ? 'var(--c-accent)' : 'transparent'}`,
-                    background: slot.iconIsCustom && slot.icon === entry.absPath ? 'var(--c-btn-active)' : 'var(--c-elevated)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: 'var(--c-text)', padding: 0,
-                  }}
-                >
-                  <SVGIcon svgString={entry.svgContent} size={18} />
-                </button>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
 
 // ── ShortcutsEditorInner ───────────────────────────────────────────────────────
 
@@ -4318,6 +5315,9 @@ function ShortcutsEditorInner(): JSX.Element {
     try { return JSON.parse(localStorage.getItem('actionring-recent-bgcolors') ?? '[]') as string[] } catch { return [] }
   })
 
+  // Workspace scroll container ref (for wheel-to-scroll during drag)
+  const workspaceScrollRef = useRef<HTMLDivElement>(null)
+
   // DnD state
   const [activeDragId, setActiveDragId] = useState<string | null>(null)
   const [dropIndex, setDropIndex] = useState<number | null>(null)
@@ -4329,6 +5329,8 @@ function ShortcutsEditorInner(): JSX.Element {
   const preDragNodesRef = useRef<ActionNode[] | null>(null)
   const libInsertedIdRef = useRef<string | null>(null)
   const libActionRef = useRef<ActionConfig | null>(null)
+  const activeNestedActionRef = useRef<ActionConfig | null>(null)
+  const nestedDragGhostIdRef = useRef<string | null>(null)
 
   // Safety net: reset drag state on pointerup if dnd-kit missed the end event
   const activeDragIdRef = useRef<string | null>(null)
@@ -4348,11 +5350,30 @@ function ShortcutsEditorInner(): JSX.Element {
           }
           libInsertedIdRef.current = null
           libActionRef.current = null
+          if (nestedDragGhostIdRef.current) {
+            const gid = nestedDragGhostIdRef.current
+            nestedDragGhostIdRef.current = null
+            setNodes(prev => prev.filter(n => n._id !== gid))
+          }
         }
       })
     }
     window.addEventListener('pointerup', handlePointerUp)
     return () => window.removeEventListener('pointerup', handlePointerUp)
+  }, [])
+
+  // Scroll workspace with mouse wheel while dragging nodes
+  // Listen on window (capture phase) so the event is caught even when pointer is captured by dnd-kit
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      if (activeDragIdRef.current === null) return
+      const container = workspaceScrollRef.current
+      if (!container) return
+      e.preventDefault()
+      container.scrollTop += e.deltaY
+    }
+    window.addEventListener('wheel', handleWheel, { passive: false, capture: true })
+    return () => window.removeEventListener('wheel', handleWheel, { capture: true })
   }, [])
 
   // Tab navigation: intercept Tab on regular inputs inside the workspace
@@ -4380,8 +5401,9 @@ function ShortcutsEditorInner(): JSX.Element {
   }, [])
 
   const isLibDrag = activeDragId?.startsWith('lib-') ?? false
+  const isNestedDrag = activeDragId?.startsWith('nested:') ?? false
   const activeLibType = isLibDrag ? (activeDragId!.startsWith('lib-run-shortcut-') ? 'run-shortcut' : activeDragId!.replace('lib-', '')) : null
-  const activeNode = (!isLibDrag && activeDragId) ? nodesRef.current.find(n => n._id === activeDragId) ?? null : null
+  const activeNode = (!isLibDrag && !isNestedDrag && activeDragId) ? nodesRef.current.find(n => n._id === activeDragId) ?? null : null
 
   // Return value picker state
   const [rvPickerState, setRvPickerState] = useState<ReturnValuePickerState>({ active: false, onPick: null, requestingNodeIndex: Infinity })
@@ -4497,7 +5519,7 @@ function ShortcutsEditorInner(): JSX.Element {
 
   const sensors = useSensors(
     useSensor(SmartPointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+    useSensor(SmartKeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
   // ── Custom collision detection — prioritise branch drop zones ──────────────
@@ -4507,7 +5529,8 @@ function ShortcutsEditorInner(): JSX.Element {
   const collisionDetection = useCallback<CollisionDetection>((args) => {
     const activeId = args.active.id.toString()
     const isNestedDrag = activeId.startsWith('nested:')
-    const ghostId = libInsertedIdRef.current
+    const libGhostId = libInsertedIdRef.current
+    const nestedGhostId = nestedDragGhostIdRef.current
 
     const nestedContainers: DroppableContainer[] = []
     const branchContainers: DroppableContainer[] = []
@@ -4515,7 +5538,9 @@ function ShortcutsEditorInner(): JSX.Element {
     const zoneContainers: DroppableContainer[] = []
     for (const container of args.droppableContainers) {
       const id = container.id.toString()
-      if (id === ghostId) continue // exclude lib-drag ghost from collision targets
+      // Exclude both lib-drag ghost and nested-drag top-level ghost so they
+      // can't be returned as their own collision target (causing dead zones).
+      if (id === libGhostId || id === nestedGhostId) continue
       if (id.startsWith('nested:')) {
         nestedContainers.push(container)
       } else if (id.startsWith('branch:')) {
@@ -4528,13 +5553,22 @@ function ShortcutsEditorInner(): JSX.Element {
     }
 
     if (isNestedDrag) {
-      if (zoneContainers.length > 0) {
-        const zoneHits = rectIntersection({ ...args, droppableContainers: zoneContainers })
-        if (zoneHits.length > 0) {
+      // Priority order for nested drags:
+      //   1. delete-zone (rectIntersection) — needed for delete UX
+      //   2. top-level sortables (closestCenter) — extract/reorder at root
+      //   3. nested items (closestCenter, with sibling/deeper logic) — reorder within branches
+      //   4. branch zones (rectIntersection) — drop into another scope
+      //   5. workspace (last resort) — only when no other target exists
+      // Steps 1 & 2 fall through to lower steps if a branch zone overlaps the
+      // active rect, so dropping into a branch keeps working.
+      const deleteZone = zoneContainers.filter(c => c.id === 'delete-zone')
+      if (deleteZone.length > 0) {
+        const deleteHits = rectIntersection({ ...args, droppableContainers: deleteZone })
+        if (deleteHits.length > 0) {
           const branchHits = branchContainers.length > 0
             ? rectIntersection({ ...args, droppableContainers: branchContainers })
             : []
-          if (branchHits.length === 0) return zoneHits
+          if (branchHits.length === 0) return deleteHits
         }
       }
       if (sortableContainers.length > 0) {
@@ -4547,6 +5581,31 @@ function ShortcutsEditorInner(): JSX.Element {
         }
       }
       if (nestedContainers.length > 0) {
+        const activeBranchId = (args.active.data.current as any)?.branchId as string | undefined
+        if (activeBranchId) {
+          // Check if dragged item's rect overlaps a sibling's branch zone (cross-scope intent)
+          const siblingBranchPrefix = activeBranchId + ':'
+          const siblingBranchContainers = branchContainers.filter(c => c.id.toString().startsWith(siblingBranchPrefix))
+          const insideSiblingScope = siblingBranchContainers.length > 0
+            ? rectIntersection({ ...args, droppableContainers: siblingBranchContainers }).length > 0
+            : false
+          if (insideSiblingScope) {
+            // Inside a sibling's scope — prefer deeper nested items for cross-scope targeting
+            const deeperItems = nestedContainers.filter(c => (c.data.current as any)?.branchId !== activeBranchId)
+            if (deeperItems.length > 0) {
+              const deeperHits = closestCenter({ ...args, droppableContainers: deeperItems })
+              if (deeperHits.length > 0) return deeperHits
+            }
+            // No deeper items — fall through to branch containers below
+          } else {
+            // Not inside any sibling scope — prefer same-branch items for reorder animations
+            const sameBranchItems = nestedContainers.filter(c => (c.data.current as any)?.branchId === activeBranchId)
+            if (sameBranchItems.length > 0) {
+              const sameBranchHits = closestCenter({ ...args, droppableContainers: sameBranchItems })
+              if (sameBranchHits.length > 0) return sameBranchHits
+            }
+          }
+        }
         const hits = closestCenter({ ...args, droppableContainers: nestedContainers })
         if (hits.length > 0) return hits
       }
@@ -4554,8 +5613,12 @@ function ShortcutsEditorInner(): JSX.Element {
         const hits = rectIntersection({ ...args, droppableContainers: branchContainers })
         if (hits.length > 0) return hits
       }
-      const remaining = [...sortableContainers, ...zoneContainers]
-      return closestCenter({ ...args, droppableContainers: remaining.length > 0 ? remaining : args.droppableContainers })
+      const workspaceZone = zoneContainers.filter(c => c.id === 'workspace')
+      if (workspaceZone.length > 0) {
+        const wsHits = rectIntersection({ ...args, droppableContainers: workspaceZone })
+        if (wsHits.length > 0) return wsHits
+      }
+      return closestCenter({ ...args, droppableContainers: args.droppableContainers })
     }
 
     // Non-nested drag: check delete-zone first (rectIntersection).
@@ -4734,6 +5797,9 @@ function ShortcutsEditorInner(): JSX.Element {
       preDragNodesRef.current = nodesRef.current
       libInsertedIdRef.current = null
       libActionRef.current = action
+    } else if (id.startsWith('nested:')) {
+      const dragData = event.active.data.current as { actions: ActionConfig[]; index: number } | undefined
+      activeNestedActionRef.current = dragData ? dragData.actions[dragData.index] : null
     }
   }, [])
 
@@ -4753,40 +5819,94 @@ function ShortcutsEditorInner(): JSX.Element {
       if (overId.startsWith('branch:')) {
         const firstColon = overId.indexOf(':', 7)
         if (firstColon > 7) {
+          // Remove ghost if present when entering a branch zone
+          const ghostId = nestedDragGhostIdRef.current
+          if (ghostId && currentNodes.some(n => n._id === ghostId)) {
+            setNodes(currentNodes.filter(n => n._id !== ghostId))
+          }
           setBranchDrop({ branchId: overId })
           setDropIndex(null)
           return
         }
       }
-      // When over workspace, delete-zone, or sortable top-level nodes, clear branch target
       setBranchDrop(null)
-      // Compute insertion index when over workspace or sortable nodes for extraction
-      if (overId === 'workspace' || overId === 'delete-zone') {
-        if (overId === 'workspace') {
-          if (currentNodes.length === 0) {
-            setDropIndex(0)
-          } else {
+
+      if (overId === 'delete-zone') {
+        const ghostId = nestedDragGhostIdRef.current
+        if (ghostId && currentNodes.some(n => n._id === ghostId)) {
+          setNodes(currentNodes.filter(n => n._id !== ghostId))
+        }
+        setDropIndex(null)
+        return
+      }
+
+      // Over workspace or a top-level sortable node — insert/move ghost for smooth preview
+      const nestedAction = activeNestedActionRef.current
+      const isOverWorkspace = overId === 'workspace'
+      const isOverTopNode = !isOverWorkspace && currentNodes.some(n => n._id === overId)
+      if (nestedAction && (isOverWorkspace || isOverTopNode)) {
+        const ghostId = nestedDragGhostIdRef.current
+        const computeTargetIndex = (): number => {
+          const nodesWithout = ghostId ? currentNodes.filter(n => n._id !== ghostId) : currentNodes
+          if (isOverWorkspace) {
+            if (nodesWithout.length === 0) return 0
             if (over) {
               const wsMidY = over.rect.top + over.rect.height / 2
-              setDropIndex(pointerY < wsMidY ? 0 : currentNodes.length)
-            } else {
-              setDropIndex(currentNodes.length)
+              return pointerY < wsMidY ? 0 : nodesWithout.length
+            }
+            return nodesWithout.length
+          }
+          const overIdx = nodesWithout.findIndex(n => n._id === overId)
+          if (overIdx !== -1) {
+            const overRect = over!.rect
+            const overMidY = overRect.top + overRect.height / 2
+            if (ghostId) {
+              const ghostIdx = currentNodes.findIndex(n => n._id === ghostId)
+              if (ghostIdx !== -1) {
+                if (ghostIdx === currentNodes.length - 1 && overIdx === nodesWithout.length - 1) {
+                  return pointerY < overRect.top ? overIdx : overIdx + 1
+                }
+                if (ghostIdx === 0 && overIdx === 0) {
+                  return pointerY < overRect.top + overRect.height ? overIdx : overIdx + 1
+                }
+              }
+            }
+            return pointerY < overMidY ? overIdx : overIdx + 1
+          }
+          return nodesWithout.length
+        }
+        const targetIdx = computeTargetIndex()
+        if (!ghostId) {
+          const newId = generateNodeId()
+          nestedDragGhostIdRef.current = newId
+          const newNodes = [...currentNodes]
+          newNodes.splice(targetIdx, 0, { _id: newId, action: nestedAction })
+          setNodes(newNodes)
+        } else {
+          const currentGhostIdx = currentNodes.findIndex(n => n._id === ghostId)
+          if (currentGhostIdx === -1) {
+            const newNodes = [...currentNodes]
+            newNodes.splice(targetIdx, 0, { _id: ghostId, action: nestedAction })
+            setNodes(newNodes)
+          } else {
+            const nodesWithout = currentNodes.filter(n => n._id !== ghostId)
+            const clampedIdx = Math.min(targetIdx, nodesWithout.length)
+            const newNodes = [...nodesWithout]
+            newNodes.splice(clampedIdx, 0, currentNodes[currentGhostIdx])
+            if (currentGhostIdx !== newNodes.findIndex(n => n._id === ghostId)) {
+              setNodes(newNodes)
             }
           }
-        } else {
-          setDropIndex(null)
         }
+        setDropIndex(null)
         return
       }
-      // Over a sortable top-level node — compute insertion position
-      const overNodeIdx = currentNodes.findIndex((n) => n._id === overId)
-      if (overNodeIdx !== -1) {
-        const overRect = over!.rect
-        const overMidY = overRect.top + overRect.height / 2
-        setDropIndex(pointerY < overMidY ? overNodeIdx : overNodeIdx + 1)
-        return
+
+      // Over nested items in same/other branch — remove ghost, let SortableContext handle visuals
+      const ghostId = nestedDragGhostIdRef.current
+      if (ghostId && currentNodes.some(n => n._id === ghostId)) {
+        setNodes(currentNodes.filter(n => n._id !== ghostId))
       }
-      // Over nested items in same/other branch — let SortableContext handle visuals
       setDropIndex(null)
       return
     }
@@ -4932,8 +6052,47 @@ function ShortcutsEditorInner(): JSX.Element {
   // onDragMove fires on every pointer move, letting us recompute the index.
   const handleDragMove = useCallback((event: DragMoveEvent) => {
     const activeId = event.active.id.toString()
-    if (!activeId.startsWith('lib-')) return
+    if (!activeId.startsWith('lib-') && !activeId.startsWith('nested:')) return
 
+    // ── Nested drag: only handle ghost repositioning ──
+    if (activeId.startsWith('nested:')) {
+      const ghostId = nestedDragGhostIdRef.current
+      if (!ghostId) return
+
+      const currentNodesN = nodesRef.current
+      const currentIdxN = currentNodesN.findIndex(n => n._id === ghostId)
+      if (currentIdxN === -1) return
+
+      const overN = event.over
+      if (!overN) return
+      const overIdN = overN.id.toString()
+      if (ZONE_IDS.has(overIdN) || overIdN.startsWith('branch:') || overIdN.startsWith('nested:') || overIdN === ghostId) return
+
+      const pointerYN = (event.activatorEvent as PointerEvent).clientY + event.delta.y
+      const nodesWithoutN = currentNodesN.filter(n => n._id !== ghostId)
+      const overIdxN = nodesWithoutN.findIndex(n => n._id === overIdN)
+      if (overIdxN === -1) return
+
+      const overRectN = overN.rect
+      const overMidYN = overRectN.top + overRectN.height / 2
+      let targetIdxN: number
+      if (currentIdxN === 0 && overIdxN === 0) {
+        targetIdxN = pointerYN < overRectN.top + overRectN.height ? overIdxN : overIdxN + 1
+      } else if (currentIdxN === currentNodesN.length - 1 && overIdxN === nodesWithoutN.length - 1) {
+        targetIdxN = pointerYN < overRectN.top ? overIdxN : overIdxN + 1
+      } else {
+        targetIdxN = pointerYN < overMidYN ? overIdxN : overIdxN + 1
+      }
+      const clampedIdxN = Math.min(targetIdxN, nodesWithoutN.length)
+      const newNodesN = [...nodesWithoutN]
+      newNodesN.splice(clampedIdxN, 0, currentNodesN[currentIdxN])
+      if (currentIdxN !== newNodesN.findIndex(n => n._id === ghostId)) {
+        setNodes(newNodesN)
+      }
+      return
+    }
+
+    // ── Lib drag: continuous ghost repositioning ──
     const insertedId = libInsertedIdRef.current
     if (!insertedId) return
 
@@ -4972,12 +6131,18 @@ function ShortcutsEditorInner(): JSX.Element {
     if (currentIdx !== newNodes.findIndex((n) => n._id === insertedId)) {
       setNodes(newNodes)
     }
+
   }, [])
 
   const handleDragCancel = useCallback(() => {
     setActiveDragId(null)
     setDropIndex(null)
     setBranchDrop(null)
+    if (nestedDragGhostIdRef.current) {
+      const gid = nestedDragGhostIdRef.current
+      nestedDragGhostIdRef.current = null
+      setNodes(prev => prev.filter(n => n._id !== gid))
+    }
     // Revert to pre-drag state if lib drag was in progress
     if (preDragNodesRef.current) {
       setNodes(preDragNodesRef.current)
@@ -4985,6 +6150,7 @@ function ShortcutsEditorInner(): JSX.Element {
     }
     libInsertedIdRef.current = null
     libActionRef.current = null
+    activeNestedActionRef.current = null
   }, [])
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
@@ -4992,6 +6158,7 @@ function ShortcutsEditorInner(): JSX.Element {
     const id = active.id.toString()
 
     setActiveDragId(null)
+    activeNestedActionRef.current = null
 
     // ── Nested item drag — reorder, extract, delete, or cross-branch move ──
     if (id.startsWith('nested:')) {
@@ -4999,6 +6166,10 @@ function ShortcutsEditorInner(): JSX.Element {
       const idx = dropIndexRef.current
       setBranchDrop(null)
       setDropIndex(null)
+
+      // Collect and clear ghost node used for workspace extraction preview
+      const nestedGhostId = nestedDragGhostIdRef.current
+      nestedDragGhostIdRef.current = null
 
       const fromData = active.data.current as { branchId: string; index: number; actions: ActionConfig[]; onReorder: (a: ActionConfig[]) => void } | undefined
       if (!fromData) return
@@ -5015,13 +6186,17 @@ function ShortcutsEditorInner(): JSX.Element {
         if (active.id === over.id) return
         const toData = over.data.current as { branchId: string; index: number; actions: ActionConfig[]; onReorder: (a: ActionConfig[]) => void } | undefined
         if (fromData && toData && fromData.branchId === toData.branchId) {
+          // Clean up ghost before reordering
+          if (nestedGhostId) setNodes(nodesRef.current.filter(n => n._id !== nestedGhostId))
           fromData.onReorder(arrayMove([...fromData.actions], fromData.index, toData.index))
           return
         }
-        // Cross-branch reorder via nested items — use modifyBranch for atomicity
+        // Cross-branch: adjust target path in case removing source shifts sibling indices
         if (fromData && toData && fromData.branchId !== toData.branchId) {
+          const adjustedToBranchId = adjustBranchIdAfterRemoval(toData.branchId, fromData.branchId, fromData.index)
           let updated = removeDraggedFromNodes(nodesRef.current)
-          const added = modifyBranch(updated, toData.branchId, (acts) => {
+          if (nestedGhostId) updated = updated.filter(n => n._id !== nestedGhostId)
+          const added = modifyBranch(updated, adjustedToBranchId, (acts) => {
             const arr = [...acts]; arr.splice(toData.index, 0, draggedAction); return arr
           })
           if (added) commitNodes(added)
@@ -5031,7 +6206,9 @@ function ShortcutsEditorInner(): JSX.Element {
 
       // Drop on delete-zone or outside workspace — delete the nested node
       if (!over || over.id === 'delete-zone') {
-        commitNodes(removeDraggedFromNodes(nodesRef.current))
+        let updated = removeDraggedFromNodes(nodesRef.current)
+        if (nestedGhostId) updated = updated.filter(n => n._id !== nestedGhostId)
+        commitNodes(updated)
         return
       }
 
@@ -5039,8 +6216,11 @@ function ShortcutsEditorInner(): JSX.Element {
 
       // Drop on a branch zone — insert into that branch
       if (branchTarget) {
+        // Adjust path in case removing source shifts the target index within a parent branch
+        const adjustedBranchId = adjustBranchIdAfterRemoval(branchTarget.branchId, fromData.branchId, fromData.index)
         let updated = removeDraggedFromNodes(nodesRef.current)
-        const added = modifyBranch(updated, branchTarget.branchId, (acts) => [...acts, draggedAction])
+        if (nestedGhostId) updated = updated.filter(n => n._id !== nestedGhostId)
+        const added = modifyBranch(updated, adjustedBranchId, (acts) => [...acts, draggedAction])
         if (added) commitNodes(added)
         return
       }
@@ -5048,10 +6228,20 @@ function ShortcutsEditorInner(): JSX.Element {
       // Drop on workspace or a top-level sortable node — extract to main sequence
       if (overId === 'workspace' || nodesRef.current.some((n) => n._id === overId)) {
         let updated = removeDraggedFromNodes(nodesRef.current)
-        const newNode: ActionNode = { _id: generateNodeId(), action: draggedAction }
+        if (nestedGhostId) {
+          // Ghost exists — replace it with the real committed node
+          const ghostIdx = updated.findIndex(n => n._id === nestedGhostId)
+          if (ghostIdx !== -1) {
+            updated = updated.map((n, i) => i === ghostIdx ? { _id: generateNodeId(), action: draggedAction } : n)
+            commitNodes(updated)
+            return
+          }
+          updated = updated.filter(n => n._id !== nestedGhostId)
+        }
+        // Fallback: insert at dropIndex or end
         const insertIdx = idx !== null ? Math.min(idx, updated.length) : updated.length
         updated = [...updated]
-        updated.splice(insertIdx, 0, newNode)
+        updated.splice(insertIdx, 0, { _id: generateNodeId(), action: draggedAction })
         commitNodes(updated)
         return
       }
@@ -5505,7 +6695,7 @@ function ShortcutsEditorInner(): JSX.Element {
                 </button>
               </div>
             )}
-            <WorkspaceDropZone style={{ flex: 1, overflowY: 'auto', padding: '16px 56px 50vh 56px' }} isLibDrag={isLibDrag} hasNodes={nodes.length > 0}>
+            <WorkspaceDropZone ref={workspaceScrollRef} style={{ flex: 1, overflowY: 'auto', padding: '16px 56px 50vh 56px' }} isLibDrag={isLibDrag} hasNodes={nodes.length > 0}>
               {nodes.length === 0 ? (
                 <div style={{
                   textAlign: 'center', color: 'var(--c-text-dim)', fontSize: 13,
@@ -5519,8 +6709,6 @@ function ShortcutsEditorInner(): JSX.Element {
               ) : (
                 <SortableContext items={nodes.map((n) => n._id)} strategy={verticalListSortingStrategy}>
                   {(() => {
-                    const isNestedDrag = activeDragId?.startsWith('nested:') ?? false
-                    const showIndicator = isNestedDrag && dropIndex !== null
                     const elements: JSX.Element[] = []
                     for (let i = 0; i < nodes.length; i++) {
                       const node = nodes[i]
@@ -5556,14 +6744,6 @@ function ShortcutsEditorInner(): JSX.Element {
                         )
                       }
 
-                      if (showIndicator && dropIndex === i) {
-                        elements.push(
-                          <div key="drop-indicator" style={{
-                            height: 2, background: 'var(--c-accent)', borderRadius: 1,
-                            margin: '2px 0', transition: 'opacity 0.15s', opacity: 0.8,
-                          }} />
-                        )
-                      }
                       elements.push(
                         <SortableNode
                           key={node._id}
@@ -5579,17 +6759,8 @@ function ShortcutsEditorInner(): JSX.Element {
                           currentEntryId={currentEntryId}
                           availableVars={collectAvailableVars(nodes, i)}
                           availableVarInfos={collectAvailableVarInfos(nodes, i)}
-                          isGhost={isLibDrag && node._id === libInsertedIdRef.current}
+                          isGhost={(isLibDrag && node._id === libInsertedIdRef.current) || (isNestedDrag && node._id === nestedDragGhostIdRef.current)}
                         />
-                      )
-                    }
-                    // Drop indicator at the end
-                    if (showIndicator && dropIndex >= nodes.length) {
-                      elements.push(
-                        <div key="drop-indicator" style={{
-                          height: 2, background: 'var(--c-accent)', borderRadius: 1,
-                          margin: '2px 0', transition: 'opacity 0.15s', opacity: 0.8,
-                        }} />
                       )
                     }
                     return elements
@@ -5765,16 +6936,23 @@ function ShortcutsEditorInner(): JSX.Element {
 
       {/* ── Icon/Color picker popover (no backdrop overlay) ── */}
       {pickerOpen && pickerPos && displaySlot && (
-        <IconColorPopover
-          pos={pickerPos}
-          slot={displaySlot}
+        <IconColorPopup
+          icon={displaySlot.icon}
+          iconIsCustom={displaySlot.iconIsCustom}
+          bgColor={displaySlot.bgColor}
+          anchor={pickerPos}
           resourceIcons={resourceIcons}
-          recentColors={recentColors}
-          onSelectIcon={handleSelectIcon}
-          onSelectBuiltinIcon={handleSelectBuiltinIcon}
+          onSelectIcon={(ic, isCustom) => {
+            if (isCustom) {
+              const entry = resourceIcons.find((e) => e.absPath === ic)
+              if (entry) handleSelectIcon(entry)
+            } else {
+              handleSelectBuiltinIcon(ic)
+            }
+          }}
           onSelectBgColor={handleSelectBgColor}
           onClose={() => setPickerOpen(false)}
-          anchorRef={iconBtnRef as React.RefObject<HTMLElement>}
+          zIndex={9000}
         />
       )}
 
@@ -5783,7 +6961,9 @@ function ShortcutsEditorInner(): JSX.Element {
         {activeDragId && (() => {
           const type = isLibDrag
             ? (activeLibType ?? '')
-            : (activeNode?.action.type ?? '')
+            : isNestedDrag
+              ? (activeNestedActionRef.current?.type ?? '')
+              : (activeNode?.action.type ?? '')
           const cfg = NODE_STYLE[type]
           if (!cfg) return null
           // For run-shortcut drag, use the referenced entry's icon/color
@@ -5791,7 +6971,9 @@ function ShortcutsEditorInner(): JSX.Element {
             ? library.find((e) => e.id === (
                 isLibDrag
                   ? (activeDragId.replace('lib-run-shortcut-', ''))
-                  : (activeNode?.action as RunShortcutAction | undefined)?.shortcutId
+                  : isNestedDrag
+                    ? (activeNestedActionRef.current as RunShortcutAction | undefined)?.shortcutId
+                    : (activeNode?.action as RunShortcutAction | undefined)?.shortcutId
               ))
             : undefined
           const overlayColor = dragCsEntry?.bgColor ?? cfg.color

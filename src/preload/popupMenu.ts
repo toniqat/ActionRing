@@ -10,7 +10,8 @@ import {
 } from '@shared/ipc.types'
 
 contextBridge.exposeInMainWorld('popupMenuAPI', {
-  onInit: (cb: (data: { items: PopupMenuItem[]; theme: string }) => void): void => {
+  onInit: (cb: (data: { items: PopupMenuItem[]; theme: 'light' | 'dark' }) => void): void => {
+    ipcRenderer.removeAllListeners(IPC_POPUP_MENU_INIT)
     ipcRenderer.on(IPC_POPUP_MENU_INIT, (_event, data) => cb(data))
   },
 

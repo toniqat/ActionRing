@@ -124,6 +124,14 @@ export class HookManager {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private uiohook: any = null
 
+  // ── SVG icon cache (persists across ring shows, max 200 entries) ────────────
+  private static readonly SVG_CACHE_MAX = 200
+  private svgIconCache = new Map<string, string>()
+
+  // ── Cursor-move throttle (~60 FPS) ──────────────────────────────────────────
+  private lastCursorSendTime = 0
+  private pendingCursorTimer: ReturnType<typeof setTimeout> | null = null
+
   // ── Mouse capture mode (settings UI) ────────────────────────────────────────
   private capturingMouse = false
   private mouseCaptureReady = false   // becomes true after 150ms grace period
@@ -203,15 +211,27 @@ export class HookManager {
               config.theme === 'system'
                 ? nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
                 : (config.theme ?? 'dark')
-            // Resolve SVG content for any custom/resource .svg icons
+            // Resolve SVG content for any custom/resource .svg icons (cached across ring shows)
             const resolvedSvgIcons: Record<string, string> = {}
             const collectSvgIcons = (slots: SlotConfig[]): void => {
               for (const slot of slots) {
                 if (slot.iconIsCustom && typeof slot.icon === 'string' && slot.icon.endsWith('.svg')) {
                   if (!resolvedSvgIcons[slot.icon]) {
-                    try {
-                      resolvedSvgIcons[slot.icon] = readFileSync(slot.icon, 'utf-8')
-                    } catch { /* icon file unreadable, fall back to img */ }
+                    const cached = this.svgIconCache.get(slot.icon)
+                    if (cached !== undefined) {
+                      resolvedSvgIcons[slot.icon] = cached
+                    } else {
+                      try {
+                        const content = readFileSync(slot.icon, 'utf-8')
+                        if (this.svgIconCache.size >= HookManager.SVG_CACHE_MAX) {
+                          // Evict oldest entry (first key in insertion order)
+                          const oldest = this.svgIconCache.keys().next().value
+                          if (oldest !== undefined) this.svgIconCache.delete(oldest)
+                        }
+                        this.svgIconCache.set(slot.icon, content)
+                        resolvedSvgIcons[slot.icon] = content
+                      } catch { /* icon file unreadable, fall back to img */ }
+                    }
                   }
                 }
                 if (slot.subSlots?.length) collectSvgIcons(slot.subSlots)
@@ -236,14 +256,26 @@ export class HookManager {
 
       uIOhook.on('mousemove', (_e) => {
         if (!this.triggerActive) return
-        const ringWin = this.getRingWindow()
-        if (!ringWin) return
-        const cursor = screen.getCursorScreenPoint()
-        const [winX, winY] = ringWin.getPosition()
-        ringWin.webContents.send(IPC_RING_CURSOR_MOVE, {
-          x: cursor.x - winX,
-          y: cursor.y - winY
-        })
+        const now = Date.now()
+        const elapsed = now - this.lastCursorSendTime
+        if (elapsed >= 16) {
+          // 16ms = ~60 FPS — send immediately
+          this.lastCursorSendTime = now
+          if (this.pendingCursorTimer) {
+            clearTimeout(this.pendingCursorTimer)
+            this.pendingCursorTimer = null
+          }
+          this.sendCursorMove()
+        } else if (!this.pendingCursorTimer) {
+          // Schedule a trailing send so the final position is never lost
+          this.pendingCursorTimer = setTimeout(() => {
+            this.pendingCursorTimer = null
+            if (this.triggerActive) {
+              this.lastCursorSendTime = Date.now()
+              this.sendCursorMove()
+            }
+          }, 16 - elapsed)
+        }
       })
 
       uIOhook.on('mouseup', (e) => {
@@ -312,10 +344,20 @@ export class HookManager {
       })
 
       uIOhook.start()
-      console.log('[HookManager] uiohook-napi started')
-    } catch (err) {
-      console.error('[HookManager] Failed to start uiohook-napi:', err)
+    } catch {
+      // uiohook-napi start failed — input hooks will be unavailable
     }
+  }
+
+  private sendCursorMove(): void {
+    const ringWin = this.getRingWindow()
+    if (!ringWin) return
+    const cursor = screen.getCursorScreenPoint()
+    const [winX, winY] = ringWin.getPosition()
+    ringWin.webContents.send(IPC_RING_CURSOR_MOVE, {
+      x: cursor.x - winX,
+      y: cursor.y - winY
+    })
   }
 
   private dismissRing(): void {
@@ -387,9 +429,24 @@ export class HookManager {
     }
   }
 
+  /** Clear the SVG icon cache (call when config/icons change). */
+  clearSvgCache(): void {
+    this.svgIconCache.clear()
+  }
+
   stop(): void {
     if (this.uiohook) {
+      this.uiohook.removeAllListeners()
       this.uiohook.stop()
+    }
+    ipcMain.removeAllListeners(IPC_RING_IDLE)
+    if (this.pendingCursorTimer) {
+      clearTimeout(this.pendingCursorTimer)
+      this.pendingCursorTimer = null
+    }
+    if (this.mouseCaptureTimer) {
+      clearTimeout(this.mouseCaptureTimer)
+      this.mouseCaptureTimer = null
     }
   }
 }

@@ -7,6 +7,40 @@ export interface Translations {
   'app.loading': string
   'app.error': string
   'app.errorRecover': string
+  'app.errorShowLog': string
+  'app.errorRestart': string
+  'mcp.serverRunning': string
+  'mcp.serverStopped': string
+  'mcp.clientActive': string
+  'mcp.clientIdle': string
+  'mcp.port': string
+  'mcp.requests': string
+  'mcp.lastRequest': string
+  'mcp.tools': string
+  'mcp.noRequests': string
+  'mcp.setupButton': string
+  'mcp.setupTitle': string
+  'mcp.setupManual': string
+  'mcp.setupManualDesc': string
+  'mcp.setupStdio': string
+  'mcp.setupHttp': string
+  'mcp.setupQuick': string
+  'mcp.setupQuickDesc': string
+  'mcp.setupWorking': string
+  'mcp.setupDone': string
+  'mcp.setupError': string
+  'mcp.setupRestart': string
+  'mcp.setupResultSuccess': string
+  'mcp.setupResultFailed': string
+  'mcp.setupResultCommand': string
+  'mcp.setupBack': string
+  'mcp.copy': string
+  'mcp.copied': string
+  'mcp.checking': string
+  'mcp.notInstalled': string
+  'mcp.installed': string
+  'mcp.registered': string
+  'mcp.installRequired': string
   'tab.configure': string
   'tab.general': string
   'tab.about': string
@@ -168,6 +202,188 @@ export interface Translations {
   'action.calculateDesc': string
   'action.comment': string
   'action.commentDesc': string
+  'action.clipboard': string
+  'action.clipboardDesc': string
+  'action.text': string
+  'action.textDesc': string
+  'action.transform': string
+  'action.transformDesc': string
+  'action.askInput': string
+  'action.askInputDesc': string
+  'action.chooseFromList': string
+  'action.chooseFromListDesc': string
+  'action.showAlert': string
+  'action.showAlertDesc': string
+  'action.httpRequest': string
+  'action.httpRequestDesc': string
+  'action.file': string
+  'action.fileDesc': string
+  'action.dateTime': string
+  'action.dateTimeDesc': string
+  'action.tryCatch': string
+  'action.tryCatchDesc': string
+  'action.registry': string
+  'action.registryDesc': string
+  'action.environment': string
+  'action.environmentDesc': string
+  'action.service': string
+  'action.serviceDesc': string
+
+  // Clipboard modes
+  'script.clipboardGet': string
+  'script.clipboardSet': string
+  'script.clipboardValue': string
+
+  // Text modes
+  'script.textModeReplace': string
+  'script.textModeSplit': string
+  'script.textModeCombine': string
+  'script.textModeCase': string
+  'script.textModeMatch': string
+  'script.textModeSubstring': string
+  'script.textModeLength': string
+  'script.textModeTrim': string
+  'script.textModePad': string
+  'script.textInput': string
+  'script.textFind': string
+  'script.textReplaceWith': string
+  'script.textRegex': string
+  'script.textSeparator': string
+  'script.textListVar': string
+  'script.textCaseUpper': string
+  'script.textCaseLower': string
+  'script.textCaseCapitalize': string
+  'script.textCaseCamel': string
+  'script.textCaseSnake': string
+  'script.textCaseKebab': string
+  'script.textPattern': string
+  'script.textMatchAll': string
+  'script.textStart': string
+  'script.textLength': string
+  'script.textPadLength': string
+  'script.textPadChar': string
+  'script.textPadStart': string
+  'script.textPadEnd': string
+
+  // Transform modes
+  'script.transformJsonParse': string
+  'script.transformJsonStringify': string
+  'script.transformUrlEncode': string
+  'script.transformUrlDecode': string
+  'script.transformBase64Encode': string
+  'script.transformBase64Decode': string
+  'script.transformHash': string
+  'script.transformAlgorithm': string
+
+  // Ask-input
+  'script.askInputTitle': string
+  'script.askInputPrompt': string
+  'script.askInputDefault': string
+  'script.askInputTypeText': string
+  'script.askInputTypeNumber': string
+  'script.askInputTypePassword': string
+
+  // Choose-from-list
+  'script.chooseTitle': string
+  'script.chooseItems': string
+  'script.chooseListVar': string
+  'script.chooseMultiple': string
+  'script.chooseAddItem': string
+  'script.chooseSourceItems': string
+  'script.chooseSourceVariable': string
+
+  // Show-alert
+  'script.alertTitle': string
+  'script.alertMessage': string
+  'script.alertConfirmText': string
+  'script.alertCancelText': string
+
+  // HTTP request
+  'script.httpUrl': string
+  'script.httpMethod': string
+  'script.httpHeaders': string
+  'script.httpBody': string
+  'script.httpTimeout': string
+  'script.httpStatusVar': string
+
+  // File
+  'script.fileModeRead': string
+  'script.fileModeWrite': string
+  'script.fileModeExists': string
+  'script.fileModeList': string
+  'script.fileModePick': string
+  'script.fileModeInfo': string
+  'script.fileModeDelete': string
+  'script.fileModeRename': string
+  'script.fileModeCopy': string
+  'script.filePath': string
+  'script.fileContent': string
+  'script.fileEncoding': string
+  'script.fileWriteOverwrite': string
+  'script.fileWriteAppend': string
+  'script.filePattern': string
+  'script.filePickTitle': string
+  'script.fileFilters': string
+  'script.filePickFile': string
+  'script.filePickDirectory': string
+  'script.fileDestination': string
+  'script.fileInfoSize': string
+  'script.fileInfoModified': string
+  'script.fileInfoCreated': string
+  'script.fileInfoExtension': string
+  'script.fileInfoName': string
+  'script.fileInfoDirectory': string
+
+  // Date-time
+  'script.dtModeNow': string
+  'script.dtModeFormat': string
+  'script.dtModeMath': string
+  'script.dtModeDiff': string
+  'script.dtModeParse': string
+  'script.dtInput': string
+  'script.dtFormat': string
+  'script.dtAmount': string
+  'script.dtUnitYears': string
+  'script.dtUnitMonths': string
+  'script.dtUnitDays': string
+  'script.dtUnitHours': string
+  'script.dtUnitMinutes': string
+  'script.dtUnitSeconds': string
+  'script.dtUnitMs': string
+  'script.dtDate1': string
+  'script.dtDate2': string
+
+  // Try-catch
+  'script.tryLabel': string
+  'script.catchLabel': string
+  'script.tryCatchEnd': string
+  'script.errorVar': string
+
+  // Registry
+  'script.regModeRead': string
+  'script.regModeWrite': string
+  'script.regModeDelete': string
+  'script.regModeExists': string
+  'script.regKeyPath': string
+  'script.regValueName': string
+  'script.regData': string
+
+  // Environment
+  'script.envModeGet': string
+  'script.envModeSet': string
+  'script.envModeList': string
+  'script.envName': string
+  'script.envValue': string
+
+  // Service
+  'script.svcModeStatus': string
+  'script.svcModeStart': string
+  'script.svcModeStop': string
+  'script.svcModeRestart': string
+  'script.svcName': string
+
+  // Palette subcategory
+  'palette.sub.windows': string
 
   // Palette tabs
   'palette.all': string
@@ -184,6 +400,8 @@ export interface Translations {
   'palette.sub.system': string
   'palette.sub.flow': string
   'palette.sub.data': string
+  'palette.sub.interaction': string
+  'palette.sub.io': string
   'palette.sub.utility': string
 
   // Script node UI
@@ -274,6 +492,8 @@ export interface Translations {
   'script.calcOpPow': string
   'script.calcOpSqrt': string
   'script.calcResult': string
+  'script.toastTitle': string
+  'script.toastBody': string
   // Sequence node
   'script.sequenceName': string
   'script.sequenceBody': string
@@ -287,6 +507,16 @@ export interface Translations {
   'script.waitKeyInput': string
   // Comment node
   'script.commentPlaceholder': string
+  // Launch action options
+  'script.launchPid': string
+  // Field labels (small gray text to the left of inputs)
+  'script.labelTarget': string
+  'script.labelKeys': string
+  'script.labelCommand': string
+  'script.labelCount': string
+  'script.labelStart': string
+  'script.labelVariable': string
+  'script.labelResult': string
   // Return value picker
   'script.selectReturnValue': string
   'script.returnValuePickerHint': string
@@ -373,6 +603,9 @@ export interface Translations {
   'carousel.addProfile': string
   'carousel.addApp': string
   'carousel.newProfile': string
+  'carousel.scrollToStart': string
+  'carousel.scrollToEnd': string
+  'carousel.addNewApp': string
 
   // Add app overlay
   'addapp.title': string
@@ -431,6 +664,8 @@ export interface Translations {
   'lib.delete': string
   'lib.removeFromGroup': string
   'lib.defaultGroup': string
+  'lib.renameGroup': string
+  'lib.duplicateGroup': string
 
   // About tab
   'about.description': string
@@ -465,6 +700,40 @@ const en: Translations = {
   'app.loading': 'Loading...',
   'app.error': 'Something went wrong',
   'app.errorRecover': 'Try to recover',
+  'app.errorShowLog': 'View error log',
+  'app.errorRestart': 'Restart app',
+  'mcp.serverRunning': 'MCP Server Running',
+  'mcp.serverStopped': 'MCP Server Stopped',
+  'mcp.clientActive': 'Client Active',
+  'mcp.clientIdle': 'No Client Activity',
+  'mcp.port': 'Port',
+  'mcp.requests': 'Requests',
+  'mcp.lastRequest': 'Last request',
+  'mcp.tools': 'Available tools',
+  'mcp.noRequests': 'No requests yet',
+  'mcp.setupButton': 'Setup MCP',
+  'mcp.setupTitle': 'MCP Server Setup',
+  'mcp.setupManual': 'Manual Configuration',
+  'mcp.setupManualDesc': 'Copy the JSON below and paste it into your AI client\'s MCP configuration.',
+  'mcp.setupStdio': 'stdio',
+  'mcp.setupHttp': 'HTTP',
+  'mcp.setupQuick': 'Quick Setup',
+  'mcp.setupQuickDesc': 'Select an AI client to automatically register the ActionRing MCP server.',
+  'mcp.setupWorking': 'Setting up...',
+  'mcp.setupDone': 'Registered successfully. Restart the client to connect.',
+  'mcp.setupError': 'Setup failed',
+  'mcp.setupRestart': 'Restart required',
+  'mcp.setupResultSuccess': 'Registered successfully. Restart the client to connect.',
+  'mcp.setupResultFailed': 'Setup failed. See the error details below.',
+  'mcp.setupResultCommand': 'You can try running this command manually:',
+  'mcp.setupBack': 'Back',
+  'mcp.copy': 'Copy',
+  'mcp.copied': 'Copied!',
+  'mcp.checking': 'Checking...',
+  'mcp.notInstalled': 'Not installed',
+  'mcp.installed': 'Installed',
+  'mcp.registered': 'Registered',
+  'mcp.installRequired': 'Install required',
   'tab.configure': 'Action Ring',
   'tab.general': 'Settings',
   'tab.about': 'About',
@@ -619,6 +888,174 @@ const en: Translations = {
   'action.calculateDesc': 'Perform a math operation and store the result',
   'action.comment': 'Comment',
   'action.commentDesc': 'Documentation note — no effect on execution',
+  'action.clipboard': 'Clipboard',
+  'action.clipboardDesc': 'Read or write the system clipboard',
+  'action.text': 'Text',
+  'action.textDesc': 'Process and transform text strings',
+  'action.transform': 'Transform',
+  'action.transformDesc': 'Convert data between formats (JSON, Base64, URL, Hash)',
+  'action.askInput': 'Ask Input',
+  'action.askInputDesc': 'Show a dialog to get text input from the user',
+  'action.chooseFromList': 'Choose from List',
+  'action.chooseFromListDesc': 'Show a list and let the user pick one or more items',
+  'action.showAlert': 'Show Alert',
+  'action.showAlertDesc': 'Show an alert dialog with OK/Cancel buttons',
+  'action.httpRequest': 'HTTP Request',
+  'action.httpRequestDesc': 'Send an HTTP request and capture the response',
+  'action.file': 'File',
+  'action.fileDesc': 'Read, write, and manage files on the filesystem',
+  'action.dateTime': 'Date/Time',
+  'action.dateTimeDesc': 'Get, format, and calculate dates and times',
+  'action.tryCatch': 'Try-Catch',
+  'action.tryCatchDesc': 'Run actions with error handling',
+  'action.registry': 'Registry',
+  'action.registryDesc': 'Read, write, or delete Windows registry keys',
+  'action.environment': 'Environment',
+  'action.environmentDesc': 'Get, set, or list environment variables',
+  'action.service': 'Service',
+  'action.serviceDesc': 'Manage Windows services (start, stop, status)',
+
+  'script.clipboardGet': 'Get',
+  'script.clipboardSet': 'Set',
+  'script.clipboardValue': 'value',
+
+  'script.textModeReplace': 'Replace',
+  'script.textModeSplit': 'Split',
+  'script.textModeCombine': 'Combine',
+  'script.textModeCase': 'Case',
+  'script.textModeMatch': 'Match',
+  'script.textModeSubstring': 'Substring',
+  'script.textModeLength': 'Length',
+  'script.textModeTrim': 'Trim',
+  'script.textModePad': 'Pad',
+  'script.textInput': 'input',
+  'script.textFind': 'find',
+  'script.textReplaceWith': 'replace with',
+  'script.textRegex': 'Regex',
+  'script.textSeparator': 'separator',
+  'script.textListVar': '$list',
+  'script.textCaseUpper': 'UPPER',
+  'script.textCaseLower': 'lower',
+  'script.textCaseCapitalize': 'Capitalize',
+  'script.textCaseCamel': 'camelCase',
+  'script.textCaseSnake': 'snake_case',
+  'script.textCaseKebab': 'kebab-case',
+  'script.textPattern': 'regex pattern',
+  'script.textMatchAll': 'All',
+  'script.textStart': 'start',
+  'script.textLength': 'length',
+  'script.textPadLength': 'pad to',
+  'script.textPadChar': 'char',
+  'script.textPadStart': 'Start',
+  'script.textPadEnd': 'End',
+
+  'script.transformJsonParse': 'JSON Parse',
+  'script.transformJsonStringify': 'JSON Stringify',
+  'script.transformUrlEncode': 'URL Encode',
+  'script.transformUrlDecode': 'URL Decode',
+  'script.transformBase64Encode': 'Base64 Encode',
+  'script.transformBase64Decode': 'Base64 Decode',
+  'script.transformHash': 'Hash',
+  'script.transformAlgorithm': 'Algorithm',
+
+  'script.askInputTitle': 'title',
+  'script.askInputPrompt': 'prompt',
+  'script.askInputDefault': 'default',
+  'script.askInputTypeText': 'Text',
+  'script.askInputTypeNumber': 'Number',
+  'script.askInputTypePassword': 'Password',
+
+  'script.chooseTitle': 'title',
+  'script.chooseItems': 'items',
+  'script.chooseListVar': '$list',
+  'script.chooseMultiple': 'Multi',
+  'script.chooseAddItem': '+ Item',
+  'script.chooseSourceItems': 'Items',
+  'script.chooseSourceVariable': 'Variable',
+
+  'script.alertTitle': 'title',
+  'script.alertMessage': 'message',
+  'script.alertConfirmText': 'OK text',
+  'script.alertCancelText': 'Cancel text',
+
+  'script.httpUrl': 'URL',
+  'script.httpMethod': 'Method',
+  'script.httpHeaders': 'headers JSON',
+  'script.httpBody': 'body',
+  'script.httpTimeout': 'timeout (ms)',
+  'script.httpStatusVar': 'status var',
+
+  'script.fileModeRead': 'Read',
+  'script.fileModeWrite': 'Write',
+  'script.fileModeExists': 'Exists',
+  'script.fileModeList': 'List',
+  'script.fileModePick': 'Pick',
+  'script.fileModeInfo': 'Info',
+  'script.fileModeDelete': 'Delete',
+  'script.fileModeRename': 'Rename',
+  'script.fileModeCopy': 'Copy',
+  'script.filePath': 'path',
+  'script.fileContent': 'content',
+  'script.fileEncoding': 'encoding',
+  'script.fileWriteOverwrite': 'Overwrite',
+  'script.fileWriteAppend': 'Append',
+  'script.filePattern': 'glob pattern',
+  'script.filePickTitle': 'dialog title',
+  'script.fileFilters': 'filters JSON',
+  'script.filePickFile': 'File',
+  'script.filePickDirectory': 'Directory',
+  'script.fileDestination': 'destination',
+  'script.fileInfoSize': 'Size',
+  'script.fileInfoModified': 'Modified',
+  'script.fileInfoCreated': 'Created',
+  'script.fileInfoExtension': 'Extension',
+  'script.fileInfoName': 'Name',
+  'script.fileInfoDirectory': 'Directory',
+
+  'script.dtModeNow': 'Now',
+  'script.dtModeFormat': 'Format',
+  'script.dtModeMath': 'Math',
+  'script.dtModeDiff': 'Diff',
+  'script.dtModeParse': 'Parse',
+  'script.dtInput': 'date input',
+  'script.dtFormat': 'format',
+  'script.dtAmount': 'amount',
+  'script.dtUnitYears': 'Years',
+  'script.dtUnitMonths': 'Months',
+  'script.dtUnitDays': 'Days',
+  'script.dtUnitHours': 'Hours',
+  'script.dtUnitMinutes': 'Minutes',
+  'script.dtUnitSeconds': 'Seconds',
+  'script.dtUnitMs': 'Milliseconds',
+  'script.dtDate1': 'date1',
+  'script.dtDate2': 'date2',
+
+  'script.tryLabel': 'TRY',
+  'script.catchLabel': 'CATCH',
+  'script.tryCatchEnd': 'END TRY',
+  'script.errorVar': 'error var',
+
+  'script.regModeRead': 'Read',
+  'script.regModeWrite': 'Write',
+  'script.regModeDelete': 'Delete',
+  'script.regModeExists': 'Exists',
+  'script.regKeyPath': 'key path',
+  'script.regValueName': 'value name',
+  'script.regData': 'data',
+
+  'script.envModeGet': 'Get',
+  'script.envModeSet': 'Set',
+  'script.envModeList': 'List',
+  'script.envName': 'variable name',
+  'script.envValue': 'value',
+
+  'script.svcModeStatus': 'Status',
+  'script.svcModeStart': 'Start',
+  'script.svcModeStop': 'Stop',
+  'script.svcModeRestart': 'Restart',
+  'script.svcName': 'service name',
+
+  'palette.sub.windows': 'Windows',
 
   'palette.all': 'All',
   'palette.actions': 'Actions',
@@ -634,6 +1071,8 @@ const en: Translations = {
   'palette.sub.system': 'System',
   'palette.sub.flow': 'Flow',
   'palette.sub.data': 'Data',
+  'palette.sub.interaction': 'Interaction',
+  'palette.sub.io': 'I/O',
   'palette.sub.utility': 'Utility',
 
   'script.condition': 'Condition',
@@ -722,6 +1161,8 @@ const en: Translations = {
   'script.calcOpPow': 'Power (^)',
   'script.calcOpSqrt': 'Square Root (√)',
   'script.calcResult': '→ $result',
+  'script.toastTitle': 'Title (optional)',
+  'script.toastBody': 'Body',
 
   'script.sequenceName': 'Name',
   'script.sequenceBody': 'PARALLEL',
@@ -734,6 +1175,14 @@ const en: Translations = {
   'script.waitKeyInput': 'Key Input',
 
   'script.commentPlaceholder': 'Write a comment…',
+  'script.launchPid': 'PID',
+  'script.labelTarget': 'Target',
+  'script.labelKeys': 'Keys',
+  'script.labelCommand': 'Command',
+  'script.labelCount': 'Count',
+  'script.labelStart': 'Start',
+  'script.labelVariable': 'Variable',
+  'script.labelResult': 'Result',
 
   'script.selectReturnValue': 'Select Return Value',
   'script.returnValuePickerHint': 'Click a return value below each action to use it',
@@ -814,6 +1263,9 @@ const en: Translations = {
   'carousel.addProfile': 'Add Profile',
   'carousel.addApp': 'Add app-specific slots',
   'carousel.newProfile': 'New Profile',
+  'carousel.scrollToStart': 'Scroll to Start',
+  'carousel.scrollToEnd': 'Scroll to End',
+  'carousel.addNewApp': 'Add New App',
 
   'addapp.title': 'Add Application',
   'addapp.subtitle': 'Choose how to add an app-specific button set.',
@@ -869,6 +1321,8 @@ const en: Translations = {
   'lib.delete': 'Delete',
   'lib.removeFromGroup': 'Remove from group',
   'lib.defaultGroup': 'Default',
+  'lib.renameGroup': 'Rename Group',
+  'lib.duplicateGroup': 'Duplicate Group',
 
   'about.description': 'A standalone action ring overlay — inspired by the Logitech MX Master 4.',
 
@@ -900,6 +1354,40 @@ const ko: Translations = {
   'app.loading': '불러오는 중...',
   'app.error': '오류가 발생했습니다',
   'app.errorRecover': '복구 시도',
+  'app.errorShowLog': '에러 로그 확인',
+  'app.errorRestart': '프로그램 재시작',
+  'mcp.serverRunning': 'MCP 서버 실행 중',
+  'mcp.serverStopped': 'MCP 서버 중지됨',
+  'mcp.clientActive': '클라이언트 활성',
+  'mcp.clientIdle': '클라이언트 활동 없음',
+  'mcp.port': '포트',
+  'mcp.requests': '요청 수',
+  'mcp.lastRequest': '마지막 요청',
+  'mcp.tools': '사용 가능한 도구',
+  'mcp.noRequests': '아직 요청 없음',
+  'mcp.setupButton': 'MCP 설정',
+  'mcp.setupTitle': 'MCP 서버 설정',
+  'mcp.setupManual': '수동 설정',
+  'mcp.setupManualDesc': '아래 JSON을 복사하여 AI 클라이언트의 MCP 설정에 붙여넣으세요.',
+  'mcp.setupStdio': 'stdio',
+  'mcp.setupHttp': 'HTTP',
+  'mcp.setupQuick': '빠른 설정',
+  'mcp.setupQuickDesc': 'AI 클라이언트를 선택하면 ActionRing MCP 서버가 자동으로 등록됩니다.',
+  'mcp.setupWorking': '설정 중...',
+  'mcp.setupDone': '등록되었습니다. 클라이언트를 재시작하세요.',
+  'mcp.setupError': '설정 실패',
+  'mcp.setupRestart': '재시작 필요',
+  'mcp.setupResultSuccess': '등록되었습니다. 클라이언트를 재시작하여 연결하세요.',
+  'mcp.setupResultFailed': '설정에 실패했습니다. 아래 오류 내용을 확인하세요.',
+  'mcp.setupResultCommand': '다음 명령어를 직접 실행해 보세요:',
+  'mcp.setupBack': '돌아가기',
+  'mcp.copy': '복사',
+  'mcp.copied': '복사됨!',
+  'mcp.checking': '확인 중...',
+  'mcp.notInstalled': '미설치',
+  'mcp.installed': '설치됨',
+  'mcp.registered': '등록됨',
+  'mcp.installRequired': '설치 필요',
   'tab.configure': '액션 링',
   'tab.general': '설정',
   'tab.about': '정보',
@@ -1054,6 +1542,174 @@ const ko: Translations = {
   'action.calculateDesc': '수학 연산을 수행하고 결과를 저장',
   'action.comment': '주석',
   'action.commentDesc': '문서화 노트 — 실행에 영향 없음',
+  'action.clipboard': '클립보드',
+  'action.clipboardDesc': '시스템 클립보드 읽기 또는 쓰기',
+  'action.text': '텍스트',
+  'action.textDesc': '텍스트 문자열 처리 및 변환',
+  'action.transform': '변환',
+  'action.transformDesc': '데이터 형식 변환 (JSON, Base64, URL, Hash)',
+  'action.askInput': '입력 요청',
+  'action.askInputDesc': '사용자에게 텍스트 입력을 받는 다이얼로그 표시',
+  'action.chooseFromList': '목록 선택',
+  'action.chooseFromListDesc': '목록에서 하나 이상의 항목을 선택하게 함',
+  'action.showAlert': '알림 표시',
+  'action.showAlertDesc': '확인/취소 버튼이 있는 알림 다이얼로그 표시',
+  'action.httpRequest': 'HTTP 요청',
+  'action.httpRequestDesc': 'HTTP 요청을 보내고 응답을 캡처',
+  'action.file': '파일',
+  'action.fileDesc': '파일 시스템에서 파일 읽기, 쓰기 및 관리',
+  'action.dateTime': '날짜/시간',
+  'action.dateTimeDesc': '날짜와 시간을 가져오고 포맷하고 계산',
+  'action.tryCatch': '트라이-캐치',
+  'action.tryCatchDesc': '에러 처리와 함께 액션 실행',
+  'action.registry': '레지스트리',
+  'action.registryDesc': 'Windows 레지스트리 키 읽기, 쓰기, 삭제',
+  'action.environment': '환경변수',
+  'action.environmentDesc': '환경변수 가져오기, 설정, 목록 조회',
+  'action.service': '서비스',
+  'action.serviceDesc': 'Windows 서비스 관리 (시작, 중지, 상태)',
+
+  'script.clipboardGet': '가져오기',
+  'script.clipboardSet': '설정',
+  'script.clipboardValue': '값',
+
+  'script.textModeReplace': '치환',
+  'script.textModeSplit': '분할',
+  'script.textModeCombine': '결합',
+  'script.textModeCase': '대소문자',
+  'script.textModeMatch': '매칭',
+  'script.textModeSubstring': '부분문자열',
+  'script.textModeLength': '길이',
+  'script.textModeTrim': '공백제거',
+  'script.textModePad': '패딩',
+  'script.textInput': '입력',
+  'script.textFind': '찾기',
+  'script.textReplaceWith': '바꿀 내용',
+  'script.textRegex': '정규식',
+  'script.textSeparator': '구분자',
+  'script.textListVar': '$리스트',
+  'script.textCaseUpper': '대문자',
+  'script.textCaseLower': '소문자',
+  'script.textCaseCapitalize': '첫글자대문자',
+  'script.textCaseCamel': 'camelCase',
+  'script.textCaseSnake': 'snake_case',
+  'script.textCaseKebab': 'kebab-case',
+  'script.textPattern': '정규식 패턴',
+  'script.textMatchAll': '전체',
+  'script.textStart': '시작',
+  'script.textLength': '길이',
+  'script.textPadLength': '패딩 길이',
+  'script.textPadChar': '문자',
+  'script.textPadStart': '앞',
+  'script.textPadEnd': '뒤',
+
+  'script.transformJsonParse': 'JSON 파싱',
+  'script.transformJsonStringify': 'JSON 문자열화',
+  'script.transformUrlEncode': 'URL 인코딩',
+  'script.transformUrlDecode': 'URL 디코딩',
+  'script.transformBase64Encode': 'Base64 인코딩',
+  'script.transformBase64Decode': 'Base64 디코딩',
+  'script.transformHash': '해시',
+  'script.transformAlgorithm': '알고리즘',
+
+  'script.askInputTitle': '제목',
+  'script.askInputPrompt': '안내 문구',
+  'script.askInputDefault': '기본값',
+  'script.askInputTypeText': '텍스트',
+  'script.askInputTypeNumber': '숫자',
+  'script.askInputTypePassword': '비밀번호',
+
+  'script.chooseTitle': '제목',
+  'script.chooseItems': '항목',
+  'script.chooseListVar': '$리스트',
+  'script.chooseMultiple': '복수',
+  'script.chooseAddItem': '+ 항목',
+  'script.chooseSourceItems': '항목',
+  'script.chooseSourceVariable': '변수',
+
+  'script.alertTitle': '제목',
+  'script.alertMessage': '메시지',
+  'script.alertConfirmText': '확인 텍스트',
+  'script.alertCancelText': '취소 텍스트',
+
+  'script.httpUrl': 'URL',
+  'script.httpMethod': '메서드',
+  'script.httpHeaders': '헤더 JSON',
+  'script.httpBody': '본문',
+  'script.httpTimeout': '타임아웃 (ms)',
+  'script.httpStatusVar': '상태 변수',
+
+  'script.fileModeRead': '읽기',
+  'script.fileModeWrite': '쓰기',
+  'script.fileModeExists': '존재 확인',
+  'script.fileModeList': '목록',
+  'script.fileModePick': '선택',
+  'script.fileModeInfo': '정보',
+  'script.fileModeDelete': '삭제',
+  'script.fileModeRename': '이름 변경',
+  'script.fileModeCopy': '복사',
+  'script.filePath': '경로',
+  'script.fileContent': '내용',
+  'script.fileEncoding': '인코딩',
+  'script.fileWriteOverwrite': '덮어쓰기',
+  'script.fileWriteAppend': '추가',
+  'script.filePattern': '글로브 패턴',
+  'script.filePickTitle': '다이얼로그 제목',
+  'script.fileFilters': '필터 JSON',
+  'script.filePickFile': '파일',
+  'script.filePickDirectory': '디렉토리',
+  'script.fileDestination': '대상 경로',
+  'script.fileInfoSize': '크기',
+  'script.fileInfoModified': '수정일',
+  'script.fileInfoCreated': '생성일',
+  'script.fileInfoExtension': '확장자',
+  'script.fileInfoName': '파일명',
+  'script.fileInfoDirectory': '디렉토리',
+
+  'script.dtModeNow': '현재',
+  'script.dtModeFormat': '포맷',
+  'script.dtModeMath': '연산',
+  'script.dtModeDiff': '차이',
+  'script.dtModeParse': '파싱',
+  'script.dtInput': '날짜 입력',
+  'script.dtFormat': '포맷',
+  'script.dtAmount': '양',
+  'script.dtUnitYears': '년',
+  'script.dtUnitMonths': '월',
+  'script.dtUnitDays': '일',
+  'script.dtUnitHours': '시간',
+  'script.dtUnitMinutes': '분',
+  'script.dtUnitSeconds': '초',
+  'script.dtUnitMs': '밀리초',
+  'script.dtDate1': '날짜1',
+  'script.dtDate2': '날짜2',
+
+  'script.tryLabel': '시도',
+  'script.catchLabel': '실패시',
+  'script.tryCatchEnd': '트라이 끝',
+  'script.errorVar': '에러 변수',
+
+  'script.regModeRead': '읽기',
+  'script.regModeWrite': '쓰기',
+  'script.regModeDelete': '삭제',
+  'script.regModeExists': '존재 확인',
+  'script.regKeyPath': '키 경로',
+  'script.regValueName': '값 이름',
+  'script.regData': '데이터',
+
+  'script.envModeGet': '가져오기',
+  'script.envModeSet': '설정',
+  'script.envModeList': '목록',
+  'script.envName': '변수 이름',
+  'script.envValue': '값',
+
+  'script.svcModeStatus': '상태',
+  'script.svcModeStart': '시작',
+  'script.svcModeStop': '중지',
+  'script.svcModeRestart': '재시작',
+  'script.svcName': '서비스 이름',
+
+  'palette.sub.windows': 'Windows',
 
   'palette.all': '전체',
   'palette.actions': '액션',
@@ -1069,6 +1725,8 @@ const ko: Translations = {
   'palette.sub.system': '시스템',
   'palette.sub.flow': '제어',
   'palette.sub.data': '데이터',
+  'palette.sub.interaction': '상호작용',
+  'palette.sub.io': '입출력',
   'palette.sub.utility': '유틸리티',
 
   'script.condition': '조건',
@@ -1157,6 +1815,8 @@ const ko: Translations = {
   'script.calcOpPow': '거듭제곱 (^)',
   'script.calcOpSqrt': '제곱근 (√)',
   'script.calcResult': '→ $결과',
+  'script.toastTitle': '타이틀 (선택)',
+  'script.toastBody': '내용',
 
   'script.sequenceName': '이름',
   'script.sequenceBody': '병렬',
@@ -1169,6 +1829,14 @@ const ko: Translations = {
   'script.waitKeyInput': '키 입력',
 
   'script.commentPlaceholder': '주석 작성…',
+  'script.launchPid': 'PID',
+  'script.labelTarget': '대상',
+  'script.labelKeys': '단축키',
+  'script.labelCommand': '명령어',
+  'script.labelCount': '횟수',
+  'script.labelStart': '시작',
+  'script.labelVariable': '변수',
+  'script.labelResult': '결과',
 
   'script.selectReturnValue': '반환값 선택',
   'script.returnValuePickerHint': '각 액션 아래의 반환값을 클릭하여 사용하세요',
@@ -1249,6 +1917,9 @@ const ko: Translations = {
   'carousel.addProfile': '프로필 추가',
   'carousel.addApp': '앱별 슬롯 추가',
   'carousel.newProfile': '새 프로필',
+  'carousel.scrollToStart': '맨 좌측으로 이동',
+  'carousel.scrollToEnd': '맨 우측으로 이동',
+  'carousel.addNewApp': '새로운 앱 항목 추가',
 
   'addapp.title': '앱 추가',
   'addapp.subtitle': '앱별 버튼 세트를 추가하는 방법을 선택하세요.',
@@ -1304,6 +1975,8 @@ const ko: Translations = {
   'lib.delete': '삭제',
   'lib.removeFromGroup': '그룹에서 제거',
   'lib.defaultGroup': '기본',
+  'lib.renameGroup': '그룹명 변경',
+  'lib.duplicateGroup': '그룹 복제',
 
   'about.description': 'Logitech MX Master 4에서 영감을 받은 독립형 액션 링 오버레이입니다.',
 

@@ -137,13 +137,15 @@ input[type="range"] {
   cursor: pointer;
 }
 
-/* Panel resize handle */
+/* Panel resize handle — wide invisible hit area, thin visible line */
 .panel-resize-handle {
-  width: 5px;
+  width: 12px;
+  margin: 0 -5px;
   position: relative;
   cursor: col-resize;
   flex-shrink: 0;
   outline: none;
+  z-index: 11;
 }
 .panel-resize-handle::after {
   content: '';
@@ -154,13 +156,13 @@ input[type="range"] {
   transform: translateX(-50%);
   width: 1px;
   background: var(--c-border);
-  transition: background 0.15s, width 0.15s;
+  transition: background 0.15s;
   pointer-events: none;
 }
+.panel-resize-handle:hover::after,
 .panel-resize-handle[data-separator='hover']::after,
 .panel-resize-handle[data-separator='drag']::after {
   background: var(--c-accent);
-  width: 2px;
 }
 
 select option {

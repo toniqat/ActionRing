@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "actionring": {
+      "command": "node",
+      "args": [
+        "F:/Project/ActionRing/mcp-server/dist/index.js"
+      ]
+    }
+  }
+}

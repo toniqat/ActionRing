@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AppConfig, SlotConfig, ActionConfig } from '@shared/config.types'
 import { BUILTIN_ICONS } from '@shared/icons'
+import { sanitizeSvg } from '@shared/svgUtils'
 import { UIIcon } from '@shared/UIIcon'
 
 interface Props {
@@ -97,12 +98,11 @@ export function SlotsTab({ config, onSave }: Props): JSX.Element {
             <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)', width: 20 }}>{i + 1}</span>
             <div
               style={{ width: 32, height: 32, borderRadius: 8, background: '#333', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              dangerouslySetInnerHTML={{
-                __html: slot.iconIsCustom
-                  ? `<img src="file://${slot.icon}" style="width:24px;height:24px;object-fit:contain"/>`
-                  : (BUILTIN_ICONS.find((ic) => ic.name === slot.icon)?.svg ?? '')
-              }}
-            />
+            >
+              {slot.iconIsCustom
+                ? <img src={`file://${slot.icon}`} style={{ width: 24, height: 24, objectFit: 'contain' }} />
+                : <span dangerouslySetInnerHTML={{ __html: sanitizeSvg(BUILTIN_ICONS.find((ic) => ic.name === slot.icon)?.svg ?? '') }} />}
+            </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 14, fontWeight: 500 }}>{slot.label}</div>
               <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
@@ -187,7 +187,7 @@ function SlotEditor({ slot, onChange }: { slot: SlotConfig; onChange: (s: SlotCo
                 width: 36, height: 36, border: `2px solid ${slot.icon === ic.name && !slot.iconIsCustom ? '#6060ff' : 'transparent'}`,
                 borderRadius: 8, background: '#2a2a3e', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
               }}
-              dangerouslySetInnerHTML={{ __html: ic.svg }}
+              dangerouslySetInnerHTML={{ __html: sanitizeSvg(ic.svg) }}
             />
           ))}
           <button

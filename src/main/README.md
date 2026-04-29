@@ -13,8 +13,10 @@ Electron main process. Runs in Node.js and owns all native capabilities: global 
 | `IconStore.ts` | Manages the custom icon library stored in `userData/custom-icons/` |
 | `LoginStartup.ts` | Toggles login-at-startup via Electron's `app.setLoginItemSettings` |
 | `TrayManager.ts` | Creates and manages the system tray icon and its context menu |
-| `WindowManager.ts` | Creates and tracks all `BrowserWindow` instances (ring, settings, appearance) |
+| `WindowManager.ts` | Creates and tracks all `BrowserWindow` instances (ring, settings, appearance, shortcuts, progress) |
 | `WindowTracker.ts` | Polls the active foreground window (Windows only) to drive per-app profile switching |
+| `SequenceManager.ts` | Executes multi-step action sequences with progress tracking via the progress overlay |
+| `PopupMenuManager.ts` | Manages a pool of popup menu `BrowserWindow` instances for context menus |
 
 ## ipc/ — IPC Handler Modules
 
@@ -28,6 +30,8 @@ Each module registers `ipcMain.handle` / `ipcMain.on` listeners for a domain of 
 | `iconHandlers.ts` | `icons:get-custom`, `icons:add-custom`, `icons:remove-custom`, `icons:get-recent`, `icons:add-recent` |
 | `profileHandlers.ts` | `app:add`, `app:remove`, `app:profile:*`, `app:update-target`, `app:get-icon`, `app:export-all-profiles`, `app:import-all-profiles` |
 | `processHandlers.ts` | `app:get-processes`, `app:import-profile` |
+| `shortcutsHandlers.ts` | `shortcuts:open`, `shortcuts:get-data`, `shortcuts:update`, `shortcuts:close`, `shortcuts:play` |
+| `updateHandlers.ts` | `app:get-version`, `update:check`, `shell:open-external`, `app:show-error-log`, `app:restart` |
 
 ## Key Constraints
 

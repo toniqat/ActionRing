@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import {
   DndContext,
   DragOverlay,
@@ -22,64 +22,13 @@ import type { ResourceIconEntry } from '@shared/ipc.types'
 import { useSettings } from '../../context/SettingsContext'
 import { useT } from '../../i18n/I18nContext'
 import { UIIcon } from '@shared/UIIcon'
-import { SVGIcon } from '@shared/SVGIcon'
-import { BUILTIN_ICONS } from '@shared/icons'
+import { IconColorPopup } from '@shared/IconColorPopup'
+import { ACTION_ICONS, resolveEntryIcon, renderEntryIconEl } from '../../utils/iconUtils'
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function generateId(): string {
   return Math.random().toString(36).slice(2, 10)
-}
-
-const ACTION_ICONS: Record<string, { icon: string; color: string }> = {
-  launch:          { icon: 'launch',         color: '#3b82f6' },
-  keyboard:        { icon: 'keyboard',       color: '#8b5cf6' },
-  shell:           { icon: 'shell',          color: '#10b981' },
-  system:          { icon: 'system',         color: '#f59e0b' },
-  link:            { icon: 'action_link',    color: '#06b6d4' },
-  'mouse-move':    { icon: 'mouse_move',     color: '#f472b6' },
-  'mouse-click':   { icon: 'mouse_click',    color: '#f472b6' },
-  'if-else':       { icon: 'if_else',        color: '#2dd4bf' },
-  loop:            { icon: 'loop',           color: '#2dd4bf' },
-  wait:            { icon: 'wait',           color: '#5eead4' },
-  'set-var':       { icon: 'variable',       color: '#f472b6' },
-  toast:           { icon: 'toast',          color: '#a78bfa' },
-  'run-shortcut':  { icon: 'call_shortcut',  color: '#6366f1' },
-  sequence:        { icon: 'all_inclusive',  color: '#2dd4bf' },
-  escape:          { icon: 'exit_to_app',   color: '#5eead4' },
-  stop:            { icon: 'stop',          color: '#5eead4' },
-  calculate:       { icon: 'calculate',     color: '#10b981' },
-  comment:         { icon: 'comment',       color: '#6b7280' },
-}
-
-const DEFAULT_ICON = { icon: 'keyboard', color: '#8b5cf6' }
-
-function resolveEntryIcon(entry: ShortcutEntry): { icon: string; color: string } {
-  if (entry.icon) return { icon: entry.icon, color: '#8b5cf6' }
-  const first = entry.actions[0]
-  if (first) return ACTION_ICONS[first.type] ?? DEFAULT_ICON
-  return DEFAULT_ICON
-}
-
-/** Renders the correct icon element for a ShortcutEntry, handling builtin, resource, custom, and UI icons. */
-function renderEntryIconEl(entry: ShortcutEntry, size: number, resourceIcons: ResourceIconEntry[]): JSX.Element | null {
-  if (!entry.icon) {
-    const first = entry.actions[0]
-    const ic = first ? (ACTION_ICONS[first.type] ?? DEFAULT_ICON) : DEFAULT_ICON
-    return <UIIcon name={ic.icon} size={size} />
-  }
-  if (entry.iconIsCustom) {
-    // Resource SVG icon — render inline SVG from loaded content
-    if (entry.icon.endsWith('.svg')) {
-      const resource = resourceIcons.find((e) => e.absPath === entry.icon)
-      if (resource) return <SVGIcon svgString={resource.svgContent} size={size} />
-    }
-    // Custom non-SVG file icon — render via img
-    return <img src={`file://${entry.icon}`} style={{ width: size, height: size, objectFit: 'contain' }} alt="" />
-  }
-  const builtin = BUILTIN_ICONS.find((ic) => ic.name === entry.icon)
-  if (builtin) return <SVGIcon svgString={builtin.svg} size={size} />
-  return <UIIcon name={entry.icon} size={size} />
 }
 
 const DEFAULT_GROUP_ID = '__default__'
@@ -256,18 +205,21 @@ function ShortcutCard({
   entry,
   viewMode,
   onMenuOpen,
+  onIconClick,
   groupName,
   resourceIcons,
 }: {
   entry: ShortcutEntry
   viewMode: ViewMode
   onMenuOpen: (e: React.MouseEvent, id: string) => void
+  onIconClick?: (e: React.MouseEvent, id: string) => void
   groupName?: string
   resourceIcons: ResourceIconEntry[]
 }): JSX.Element {
   const { color } = resolveEntryIcon(entry)
   const actionBadges = entry.actions.slice(0, 4)
   const extra = entry.actions.length - actionBadges.length
+  const [hovered, setHovered] = useState(false)
 
   const menuBtn = (
     <button
@@ -289,16 +241,30 @@ function ShortcutCard({
 
   const badgeColor = entry.bgColor ?? color
 
+  const iconClickHandler = onIconClick
+    ? (e: React.MouseEvent) => { e.stopPropagation(); onIconClick(e, entry.id) }
+    : undefined
+
   if (viewMode === 'list') {
     return (
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 10,
-        padding: '8px 12px',
-        background: 'var(--c-surface)',
-        borderBottom: '1px solid var(--c-border-sub)',
-        cursor: 'default',
-      }}>
-        <div style={{ width: 26, height: 26, borderRadius: 6, background: badgeColor + '33', border: `1px solid ${badgeColor}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: badgeColor }}>
+      <div
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '8px 12px',
+          background: hovered ? 'var(--c-elevated)' : 'var(--c-surface)',
+          borderBottom: '1px solid var(--c-border-sub)',
+          cursor: 'default',
+          transition: 'background 0.12s',
+        }}>
+        <div
+          onMouseDown={iconClickHandler ? (e) => e.stopPropagation() : undefined}
+          onClick={iconClickHandler}
+          style={{ width: 26, height: 26, borderRadius: 6, background: badgeColor + '33', border: `1px solid ${badgeColor}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: badgeColor, cursor: iconClickHandler ? 'pointer' : 'default', transition: 'border-color 0.15s' }}
+          onMouseEnter={iconClickHandler ? (e) => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--c-accent)' } : undefined}
+          onMouseLeave={iconClickHandler ? (e) => { (e.currentTarget as HTMLDivElement).style.borderColor = badgeColor + '55' } : undefined}
+        >
           {renderEntryIconEl(entry, 14, resourceIcons)}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -318,18 +284,28 @@ function ShortcutCard({
   }
 
   return (
-    <div style={{
-      background: 'var(--c-surface)',
-      border: '1px solid var(--c-border)',
-      borderRadius: 10,
-      padding: '12px 14px',
-      display: 'flex', flexDirection: 'column',
-      height: 88, overflow: 'hidden',
-      cursor: 'default', minWidth: 0,
-    }}>
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      style={{
+        background: hovered ? 'var(--c-elevated)' : 'var(--c-surface)',
+        border: hovered ? '1px solid var(--c-accent-border)' : '1px solid var(--c-border)',
+        borderRadius: 10,
+        padding: '12px 14px',
+        display: 'flex', flexDirection: 'column',
+        height: 88, overflow: 'hidden',
+        cursor: 'default', minWidth: 0,
+        transition: 'background 0.12s, border-color 0.12s',
+      }}>
       {/* Top row: icon + name + menu */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-        <div style={{ width: 28, height: 28, borderRadius: 7, background: badgeColor + '33', border: `1px solid ${badgeColor}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: badgeColor }}>
+        <div
+          onMouseDown={iconClickHandler ? (e) => e.stopPropagation() : undefined}
+          onClick={iconClickHandler}
+          style={{ width: 28, height: 28, borderRadius: 7, background: badgeColor + '33', border: `1px solid ${badgeColor}55`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, color: badgeColor, cursor: iconClickHandler ? 'pointer' : 'default', transition: 'border-color 0.15s' }}
+          onMouseEnter={iconClickHandler ? (e) => { (e.currentTarget as HTMLDivElement).style.borderColor = 'var(--c-accent)' } : undefined}
+          onMouseLeave={iconClickHandler ? (e) => { (e.currentTarget as HTMLDivElement).style.borderColor = badgeColor + '55' } : undefined}
+        >
           {renderEntryIconEl(entry, 15, resourceIcons)}
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -373,20 +349,36 @@ function SortableCardWrapper({
   entry,
   viewMode,
   onMenuOpen,
+  onIconClick,
   groupName,
   resourceIcons,
 }: {
   entry: ShortcutEntry
   viewMode: ViewMode
   onMenuOpen: (e: React.MouseEvent, id: string) => void
+  onIconClick?: (e: React.MouseEvent, id: string) => void
   groupName?: string
   resourceIcons: ResourceIconEntry[]
 }): JSX.Element {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: entry.id })
+  const wrapperRef = useRef<HTMLDivElement>(null)
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    // Find the menu button inside the card to position the context menu near it
+    const menuBtn = wrapperRef.current?.querySelector<HTMLElement>('[title="More options"]')
+    if (menuBtn) {
+      const fakeEvent = { ...e, currentTarget: menuBtn } as unknown as React.MouseEvent
+      onMenuOpen(fakeEvent, entry.id)
+    } else {
+      onMenuOpen(e, entry.id)
+    }
+  }
 
   return (
     <div
-      ref={setNodeRef}
+      ref={(node) => { setNodeRef(node); (wrapperRef as React.MutableRefObject<HTMLDivElement | null>).current = node }}
+      onContextMenu={handleContextMenu}
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
@@ -396,7 +388,7 @@ function SortableCardWrapper({
       {...attributes}
       {...listeners}
     >
-      <ShortcutCard entry={entry} viewMode={viewMode} onMenuOpen={onMenuOpen} groupName={groupName} resourceIcons={resourceIcons} />
+      <ShortcutCard entry={entry} viewMode={viewMode} onMenuOpen={onMenuOpen} onIconClick={onIconClick} groupName={groupName} resourceIcons={resourceIcons} />
     </div>
   )
 }
@@ -407,10 +399,12 @@ function SidebarDroppableGroup({
   group,
   isActive,
   onClick,
+  onContextMenu,
 }: {
   group: ShortcutGroup
   isActive: boolean
   onClick: () => void
+  onContextMenu?: (e: React.MouseEvent) => void
 }): JSX.Element {
   const { setNodeRef, isOver } = useDroppable({
     id: `group:${group.id}`,
@@ -421,6 +415,7 @@ function SidebarDroppableGroup({
     <button
       ref={setNodeRef}
       onClick={onClick}
+      onContextMenu={onContextMenu}
       style={{
         display: 'flex', alignItems: 'center',
         width: '100%', padding: '7px 12px',
@@ -455,6 +450,7 @@ function MenuItem({
   danger,
   muted,
   focused,
+  disabled,
   rightAdornment,
   onMouseEnterItem,
 }: {
@@ -463,6 +459,7 @@ function MenuItem({
   danger?: boolean
   muted?: boolean
   focused?: boolean
+  disabled?: boolean
   rightAdornment?: React.ReactNode
   onMouseEnterItem?: () => void
 }): JSX.Element {
@@ -470,19 +467,23 @@ function MenuItem({
   return (
     <button
       onMouseDown={(e) => e.preventDefault()}
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
+      disabled={disabled}
       style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         gap: 8, padding: '6px 12px', width: '100%',
         background: focused ? bgColor : 'none', border: 'none',
-        color: danger ? '#ef4444' : muted ? 'var(--c-text-dim)' : 'var(--c-text)',
-        fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
+        color: disabled ? 'var(--c-text-dim)' : danger ? '#ef4444' : muted ? 'var(--c-text-dim)' : 'var(--c-text)',
+        fontSize: 12, cursor: disabled ? 'default' : 'pointer', fontFamily: 'inherit',
         textAlign: 'left', whiteSpace: 'nowrap',
         transition: 'background 0.1s',
+        opacity: disabled ? 0.45 : 1,
       }}
       onMouseEnter={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = bgColor
-        onMouseEnterItem?.()
+        if (!disabled) {
+          (e.currentTarget as HTMLButtonElement).style.background = bgColor
+          onMouseEnterItem?.()
+        }
       }}
       onMouseLeave={(e) => { if (!focused) (e.currentTarget as HTMLButtonElement).style.background = 'none' }}
     >
@@ -494,6 +495,90 @@ function MenuItem({
 
 function MenuSeparator(): JSX.Element {
   return <div style={{ height: 1, background: 'var(--c-border-sub)', margin: '4px 0' }} />
+}
+
+// ── GroupContextMenu ──────────────────────────────────────────────────────────
+
+function GroupContextMenu({
+  pos,
+  isDefault,
+  onRename,
+  onDuplicate,
+  onExport,
+  onDelete,
+  onAddGroup,
+  onClose,
+}: {
+  pos: { x: number; y: number }
+  isDefault?: boolean
+  onRename: () => void
+  onDuplicate: () => void
+  onExport: () => void
+  onDelete: () => void
+  onAddGroup: () => void
+  onClose: () => void
+}): JSX.Element {
+  const t = useT()
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  const MENU_W = 180
+  const left = Math.min(pos.x, window.innerWidth - MENU_W - 8)
+  const top = Math.min(pos.y, window.innerHeight - 240)
+
+  return (
+    <div
+      ref={menuRef}
+      style={{
+        position: 'fixed', top, left, zIndex: 1000,
+        background: 'var(--c-elevated)',
+        border: '1px solid var(--c-border)',
+        borderRadius: 8, padding: '4px 0',
+        minWidth: MENU_W,
+        boxShadow: '0 6px 24px rgba(0,0,0,0.4)',
+      }}
+    >
+      <MenuItem disabled={isDefault} onClick={() => { onRename(); onClose() }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <UIIcon name="edit" size={13} />
+          {t('lib.renameGroup')}
+        </span>
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem onClick={() => { onDuplicate(); onClose() }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <UIIcon name="duplicate" size={13} />
+          {t('lib.duplicateGroup')}
+        </span>
+      </MenuItem>
+      <MenuItem onClick={() => { onExport(); onClose() }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <UIIcon name="upload" size={13} />
+          {t('lib.exportGroup')}
+        </span>
+      </MenuItem>
+      <MenuItem danger disabled={isDefault} onClick={() => { onDelete(); onClose() }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <UIIcon name="delete" size={13} />
+          {t('lib.deleteGroup')}
+        </span>
+      </MenuItem>
+      <MenuSeparator />
+      <MenuItem onClick={() => { onAddGroup(); onClose() }}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <UIIcon name="add" size={13} />
+          {t('lib.addGroup')}
+        </span>
+      </MenuItem>
+    </div>
+  )
 }
 
 // ── ShortcutsTabInner ──────────────────────────────────────────────────────────
@@ -521,10 +606,18 @@ function ShortcutsTabInner(): JSX.Element {
   const [renamingGroupId, setRenamingGroupId] = useState<string | null>(null)
   const [renamingGroupValue, setRenamingGroupValue] = useState('')
   const [resourceIcons, setResourceIcons] = useState<ResourceIconEntry[]>([])
+  const [groupCtxMenu, setGroupCtxMenu] = useState<{ groupId: string; x: number; y: number; isDefault?: boolean } | null>(null)
+  const [iconPopupEntryId, setIconPopupEntryId] = useState<string | null>(null)
+  const [iconPopupAnchor, setIconPopupAnchor] = useState<{ top: number; left: number } | null>(null)
 
   const groupRenameInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const submenuRef = useRef<HTMLDivElement>(null)
+
+  const deleteRefCount = useMemo(
+    () => deleteTarget ? countRefs(draft, deleteTarget.id) : 0,
+    [draft, deleteTarget],
+  )
 
   useEffect(() => {
     window.settingsAPI?.getResourceIcons?.().then(setResourceIcons).catch(() => {})
@@ -774,6 +867,25 @@ function ShortcutsTabInner(): JSX.Element {
     URL.revokeObjectURL(url)
   }
 
+  const handleDuplicateGroup = (groupId: string) => {
+    const group = groups.find((g) => g.id === groupId)
+    if (!group) return
+    const newGroup: ShortcutGroup = { id: generateId(), name: generateGroupName(groups) }
+    const entries = library.filter((e) => e.groupId === groupId)
+    const newEntries = entries.map((e) => ({
+      ...e,
+      id: generateId(),
+      name: uniqueEntryName(e.name, library),
+      groupId: newGroup.id,
+      createdAt: Date.now(),
+      isFavorite: false,
+    }))
+    mutateLibrary([...library, ...newEntries], [...groups, newGroup])
+    setSelection(newGroup.id)
+    setRenamingGroupId(newGroup.id)
+    setRenamingGroupValue(newGroup.name)
+  }
+
   const handleRenameGroupCommit = () => {
     if (!renamingGroupId) return
     const name = renamingGroupValue.trim()
@@ -807,6 +919,32 @@ function ShortcutsTabInner(): JSX.Element {
       shortcutsLibrary: library,
       shortcutGroups: groups,
     })
+  }
+
+  const handleIconClick = (e: React.MouseEvent, entryId: string) => {
+    // Toggle: if popup is already open for this entry, close it
+    if (iconPopupEntryId === entryId) {
+      setIconPopupEntryId(null)
+      setIconPopupAnchor(null)
+      return
+    }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const POPUP_W = 268
+    // Position to the right of the icon, top-aligned; fall back to left if it would overflow
+    if (rect.right + 4 + POPUP_W <= window.innerWidth) {
+      setIconPopupAnchor({ top: rect.top, left: rect.right + 4 })
+    } else {
+      setIconPopupAnchor({ top: rect.top, left: rect.left - POPUP_W - 4 })
+    }
+    setIconPopupEntryId(entryId)
+  }
+
+  const handleIconSelect = (entryId: string, icon: string, isCustom: boolean) => {
+    mutateLibrary(library.map((e) => e.id === entryId ? { ...e, icon, iconIsCustom: isCustom } : e))
+  }
+
+  const handleBgColorSelect = (entryId: string, color: string | undefined) => {
+    mutateLibrary(library.map((e) => e.id === entryId ? { ...e, bgColor: color } : e))
   }
 
   const handleMenuOpen = (e: React.MouseEvent, entryId: string) => {
@@ -934,11 +1072,11 @@ function ShortcutsTabInner(): JSX.Element {
               <button
                 onClick={handleAddGroup}
                 title={t('lib.addGroup')}
-                style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--c-border)', borderRadius: 4, cursor: 'pointer', fontSize: 13, color: 'var(--c-text-dim)', lineHeight: 1, transition: 'background 0.1s, color 0.1s', flexShrink: 0 }}
+                style={{ width: 20, height: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', borderRadius: 4, cursor: 'pointer', color: 'var(--c-text-dim)', padding: 0, transition: 'background 0.1s, color 0.1s', flexShrink: 0 }}
                 onMouseEnter={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.background = 'var(--c-elevated)'; b.style.color = 'var(--c-text)' }}
                 onMouseLeave={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.background = 'none'; b.style.color = 'var(--c-text-dim)' }}
               >
-                +
+                <UIIcon name="add" size={14} />
               </button>
             </div>
           </div>
@@ -949,6 +1087,7 @@ function ShortcutsTabInner(): JSX.Element {
             group={{ id: DEFAULT_GROUP_ID, name: t('lib.defaultGroup') }}
             isActive={selection === DEFAULT_GROUP_ID}
             onClick={() => setSelection(DEFAULT_GROUP_ID)}
+            onContextMenu={(e) => { e.preventDefault(); setGroupCtxMenu({ groupId: DEFAULT_GROUP_ID, x: e.clientX, y: e.clientY, isDefault: true }) }}
           />
 
           {groups.map((group) => (
@@ -957,6 +1096,7 @@ function ShortcutsTabInner(): JSX.Element {
               group={group}
               isActive={selection === group.id}
               onClick={() => setSelection(group.id)}
+              onContextMenu={(e) => { e.preventDefault(); setGroupCtxMenu({ groupId: group.id, x: e.clientX, y: e.clientY }) }}
             />
           ))}
         </div>
@@ -1089,13 +1229,13 @@ function ShortcutsTabInner(): JSX.Element {
                       {viewMode === 'card' ? (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
                           {section.entries.map((entry) => (
-                            <SortableCardWrapper key={entry.id} entry={entry} viewMode="card" onMenuOpen={handleMenuOpen} resourceIcons={resourceIcons} />
+                            <SortableCardWrapper key={entry.id} entry={entry} viewMode="card" onMenuOpen={handleMenuOpen} onIconClick={handleIconClick} resourceIcons={resourceIcons} />
                           ))}
                         </div>
                       ) : (
                         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                           {section.entries.map((entry) => (
-                            <SortableCardWrapper key={entry.id} entry={entry} viewMode="list" onMenuOpen={handleMenuOpen} groupName={section.id === DEFAULT_GROUP_ID ? undefined : section.name} resourceIcons={resourceIcons} />
+                            <SortableCardWrapper key={entry.id} entry={entry} viewMode="list" onMenuOpen={handleMenuOpen} onIconClick={handleIconClick} groupName={section.id === DEFAULT_GROUP_ID ? undefined : section.name} resourceIcons={resourceIcons} />
                           ))}
                         </div>
                       )}
@@ -1116,7 +1256,7 @@ function ShortcutsTabInner(): JSX.Element {
                       {displayList.map((entry) => {
                         const grp = entry.groupId ? groups.find((g) => g.id === entry.groupId) : null
                         return (
-                          <SortableCardWrapper key={entry.id} entry={entry} viewMode="card" onMenuOpen={handleMenuOpen} groupName={grp?.name} resourceIcons={resourceIcons} />
+                          <SortableCardWrapper key={entry.id} entry={entry} viewMode="card" onMenuOpen={handleMenuOpen} onIconClick={handleIconClick} groupName={grp?.name} resourceIcons={resourceIcons} />
                         )
                       })}
                     </div>
@@ -1125,7 +1265,7 @@ function ShortcutsTabInner(): JSX.Element {
                       {displayList.map((entry) => {
                         const grp = entry.groupId ? groups.find((g) => g.id === entry.groupId) : null
                         return (
-                          <SortableCardWrapper key={entry.id} entry={entry} viewMode="list" onMenuOpen={handleMenuOpen} groupName={grp?.name} resourceIcons={resourceIcons} />
+                          <SortableCardWrapper key={entry.id} entry={entry} viewMode="list" onMenuOpen={handleMenuOpen} onIconClick={handleIconClick} groupName={grp?.name} resourceIcons={resourceIcons} />
                         )
                       })}
                     </div>
@@ -1282,7 +1422,7 @@ function ShortcutsTabInner(): JSX.Element {
       {deleteTarget && (
         <DeleteDialog
           entry={deleteTarget}
-          refCount={countRefs(draft, deleteTarget.id)}
+          refCount={deleteRefCount}
           onConfirm={handleDeleteConfirm}
           onCancel={() => setDeleteTarget(null)}
         />
@@ -1294,6 +1434,44 @@ function ShortcutsTabInner(): JSX.Element {
           groupName={deleteGroupTarget.name}
           onConfirm={handleDeleteGroup}
           onCancel={() => setDeleteGroupTarget(null)}
+        />
+      )}
+
+      {/* Icon/Color popup */}
+      {iconPopupEntryId && iconPopupAnchor && (() => {
+        const popupEntry = library.find((e) => e.id === iconPopupEntryId)
+        if (!popupEntry) return null
+        return (
+          <IconColorPopup
+            icon={popupEntry.icon ?? resolveEntryIcon(popupEntry).icon}
+            iconIsCustom={popupEntry.iconIsCustom ?? false}
+            bgColor={popupEntry.bgColor}
+            anchor={iconPopupAnchor}
+            resourceIcons={resourceIcons}
+            onSelectIcon={(icon, isCustom) => handleIconSelect(iconPopupEntryId, icon, isCustom)}
+            onSelectBgColor={(color) => handleBgColorSelect(iconPopupEntryId, color)}
+            onClose={() => { setIconPopupEntryId(null); setIconPopupAnchor(null) }}
+          />
+        )
+      })()}
+
+      {/* Group context menu */}
+      {groupCtxMenu && (
+        <GroupContextMenu
+          pos={{ x: groupCtxMenu.x, y: groupCtxMenu.y }}
+          isDefault={groupCtxMenu.isDefault}
+          onRename={() => {
+            const g = groups.find((g) => g.id === groupCtxMenu.groupId)
+            if (g) { setRenamingGroupId(g.id); setRenamingGroupValue(g.name); setSelection(g.id) }
+          }}
+          onDuplicate={() => handleDuplicateGroup(groupCtxMenu.groupId)}
+          onExport={() => handleExportGroup(groupCtxMenu.groupId)}
+          onDelete={() => {
+            const g = groups.find((g) => g.id === groupCtxMenu.groupId)
+            if (g) setDeleteGroupTarget(g)
+          }}
+          onAddGroup={handleAddGroup}
+          onClose={() => setGroupCtxMenu(null)}
         />
       )}
     </DndContext>

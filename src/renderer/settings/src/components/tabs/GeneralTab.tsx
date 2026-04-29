@@ -533,12 +533,10 @@ export function GeneralTab({ config, onSave }: Props): JSX.Element {
                   setResetting(true)
                   try {
                     await window.settingsAPI.resetConfig()
-                    setShowResetConfirm(false)
-                    showToast(setResetStatus, 'success')
+                    await window.settingsAPI.restartApp()
                   } catch {
                     setShowResetConfirm(false)
                     showToast(setResetStatus, 'error')
-                  } finally {
                     setResetting(false)
                   }
                 }}

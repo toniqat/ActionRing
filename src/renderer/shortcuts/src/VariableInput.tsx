@@ -346,6 +346,8 @@ export interface VariableInputProps {
   /** Extended var info with source action types (optional, for richer icon display). */
   availableVarInfos?: VarInfo[]
   placeholder?: string
+  /** Small gray label text rendered to the left of the input field. */
+  label?: string
   style?: CSSProperties
   /** Index of the node this input belongs to — used to restrict return value picker to previous nodes. */
   nodeIndex?: number
@@ -369,6 +371,7 @@ export function VariableInput({
   onChange,
   availableVars,
   availableVarInfos,
+  label,
   style,
   nodeIndex,
   noDropTarget,
@@ -437,7 +440,18 @@ export function VariableInput({
       // Skip if clicking on the trigger button/chip/input itself
       if (btnRef.current && btnRef.current.contains(target)) return
       if (chipRef.current && chipRef.current.contains(target)) return
-      if (inputRef.current && inputRef.current.contains(target)) return
+      // If clicking the input while it's empty, close the menu (user wants to dismiss)
+      // If input has text, keep menu open (user may be repositioning cursor)
+      if (inputRef.current && inputRef.current.contains(target)) {
+        if (!inputRef.current.value.trim()) {
+          setMenuOpen(false)
+          setSubmenuOpen(false)
+          setFocusedIndex(-1)
+          setFocusedLevel('main')
+          setSubFocusedIndex(-1)
+        }
+        return
+      }
       if (menuRef.current && !menuRef.current.contains(target) &&
           (!submenuRef.current || !submenuRef.current.contains(target))) {
         setMenuOpen(false)
@@ -724,6 +738,15 @@ export function VariableInput({
         }
         return
       }
+    }
+
+    // Enter without menu open — confirm and stop propagation so dnd-kit doesn't start a drag
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      e.stopPropagation()
+      setMode('button')
+      closeMenu()
+      return
     }
 
     if (e.key === 'Escape') {
@@ -1080,6 +1103,14 @@ export function VariableInput({
     )
   }
 
+  // ── Label element ──────────────────────────────────────────────────────────
+
+  const labelEl = label ? (
+    <span style={{ fontSize: 9, color: 'var(--c-text-dim)', flexShrink: 0, fontWeight: 500, letterSpacing: '0.02em', whiteSpace: 'nowrap', userSelect: 'none' }}>
+      {label}
+    </span>
+  ) : null
+
   // ── Input style ──────────────────────────────────────────────────────────
 
   const baseStyle: CSSProperties = {
@@ -1124,6 +1155,7 @@ export function VariableInput({
     return (
       <>
         {measurer}
+        {labelEl}
         <input
           ref={inputRef}
           value={value}
@@ -1143,7 +1175,7 @@ export function VariableInput({
             height: 26,
             lineHeight: '16px',
             cursor: mode === 'chip-editing' ? 'default' : 'text',
-            caretColor: (mode === 'chip-editing' || menuOpen) ? 'transparent' : undefined,
+            caretColor: mode === 'chip-editing' ? 'transparent' : undefined,
           }}
         />
         {renderMenu()}
@@ -1201,6 +1233,7 @@ export function VariableInput({
     return (
       <>
         {measurer}
+        {labelEl}
         <div
           ref={chipRef}
           onClick={handleChipClick}
@@ -1273,6 +1306,7 @@ export function VariableInput({
   return (
     <>
       {measurer}
+      {labelEl}
       <button
         ref={btnRef as React.RefObject<HTMLButtonElement>}
         onClick={handleButtonClick}

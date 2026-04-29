@@ -2,17 +2,21 @@ import { BrowserWindow, nativeImage, screen } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 
+let cachedAppIcon: Electron.NativeImage | null = null
+
 function getAppIcon(): Electron.NativeImage {
+  if (cachedAppIcon) return cachedAppIcon
   const iconFile = process.platform === 'win32' ? 'icon.ico' : 'icon.svg'
   const iconPath = is.dev
     ? join(process.cwd(), 'resources/logo', iconFile)
     : join(process.resourcesPath, 'logo', iconFile)
   try {
     const img = nativeImage.createFromPath(iconPath)
-    return img.isEmpty() ? nativeImage.createEmpty() : img
+    cachedAppIcon = img.isEmpty() ? nativeImage.createEmpty() : img
   } catch {
-    return nativeImage.createEmpty()
+    cachedAppIcon = nativeImage.createEmpty()
   }
+  return cachedAppIcon
 }
 
 export class WindowManager {
@@ -109,6 +113,14 @@ export class WindowManager {
     win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
       console.error('[WindowManager] Settings window failed to load:', errorCode, errorDescription, validatedURL)
     })
+
+    if (is.dev) {
+      win.webContents.on('before-input-event', (_e, input) => {
+        if (input.key === 'F12' && input.type === 'keyDown') {
+          win.webContents.toggleDevTools()
+        }
+      })
+    }
 
     if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
       win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}/settings/index.html`)

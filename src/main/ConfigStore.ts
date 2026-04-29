@@ -156,6 +156,7 @@ function buildDefaultConfig(): AppConfig {
     language: 'en',
     apps: [defaultEntry],
     shortcutsLibrary: library,
+    mcpEnabled: true,
   }
 }
 
@@ -831,7 +832,7 @@ export class ConfigStore {
    */
   updateLibraryEntry(
     id: string,
-    actions: ActionConfig[],
+    actions?: ActionConfig[],
     name?: string,
     icon?: string,
     iconIsCustom?: boolean,
@@ -843,7 +844,7 @@ export class ConfigStore {
 
     const updated: ShortcutEntry = {
       ...library[idx],
-      actions,
+      ...(actions !== undefined ? { actions } : {}),
       lastUsed: Date.now(),
       ...(name !== undefined ? { name } : {}),
       ...(icon !== undefined ? { icon, iconIsCustom: iconIsCustom ?? false } : {}),

@@ -43,6 +43,13 @@ import {
   IPC_ICONS_GET_RESOURCE,
   IPC_ICONS_ADD_RECENT,
   IPC_WINDOW_CLOSE,
+  IPC_MCP_GET_STATUS,
+  IPC_MCP_SETUP,
+  IPC_MCP_TOGGLE,
+  IPC_MCP_GET_ENTRY_PATH,
+  IPC_MCP_CHECK_CLIENTS,
+  IPC_APP_SHOW_ERROR_LOG,
+  IPC_APP_RESTART,
   type UpdateStatus,
   type ResourceIconEntry,
 } from '@shared/ipc.types'
@@ -52,6 +59,7 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   saveConfig: (payload: ConfigSavePayload): Promise<void> =>
     ipcRenderer.invoke(IPC_CONFIG_SAVE, payload),
   onConfigUpdated: (callback: (config: AppConfig) => void) => {
+    ipcRenderer.removeAllListeners(IPC_CONFIG_UPDATED)
     ipcRenderer.on(IPC_CONFIG_UPDATED, (_event, config) => callback(config))
   },
   pickExe: (): Promise<string | null> => ipcRenderer.invoke(IPC_FILE_PICK_EXE),
@@ -60,15 +68,18 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   openAppearanceEditor: (data: AppearanceSlotData): Promise<void> =>
     ipcRenderer.invoke(IPC_APPEARANCE_OPEN, data),
   onAppearanceUpdated: (callback: (data: AppearanceSlotData) => void) => {
+    ipcRenderer.removeAllListeners(IPC_APPEARANCE_UPDATED)
     ipcRenderer.on(IPC_APPEARANCE_UPDATED, (_event, data) => callback(data))
   },
 
   openShortcutsEditor: (data: ShortcutsSlotData): Promise<void> =>
     ipcRenderer.invoke(IPC_SHORTCUTS_OPEN, data),
   onShortcutsUpdated: (callback: (data: ShortcutsSlotData) => void): void => {
+    ipcRenderer.removeAllListeners(IPC_SHORTCUTS_UPDATED)
     ipcRenderer.on(IPC_SHORTCUTS_UPDATED, (_event, data) => callback(data))
   },
   onShortcutsCommitted: (callback: () => void): void => {
+    ipcRenderer.removeAllListeners(IPC_SHORTCUTS_COMMITTED)
     ipcRenderer.on(IPC_SHORTCUTS_COMMITTED, () => callback())
   },
 
@@ -160,4 +171,22 @@ contextBridge.exposeInMainWorld('settingsAPI', {
   addRecentIcon: (iconRef: string): void => {
     ipcRenderer.send(IPC_ICONS_ADD_RECENT, iconRef)
   },
+
+  // ── MCP server status ────────────────────────────────────────────────────
+  getMcpStatus: (): Promise<import('@shared/ipc.types').McpServerStatus> =>
+    ipcRenderer.invoke(IPC_MCP_GET_STATUS),
+  setupMcp: (target: import('@shared/ipc.types').McpSetupTarget): Promise<import('@shared/ipc.types').McpSetupResult> =>
+    ipcRenderer.invoke(IPC_MCP_SETUP, target),
+  getMcpEntryPath: (): Promise<string> =>
+    ipcRenderer.invoke(IPC_MCP_GET_ENTRY_PATH),
+  toggleMcp: (enabled: boolean): Promise<boolean> =>
+    ipcRenderer.invoke(IPC_MCP_TOGGLE, enabled),
+  checkMcpClient: (target: import('@shared/ipc.types').McpSetupTarget): Promise<import('@shared/ipc.types').McpClientStatus> =>
+    ipcRenderer.invoke(IPC_MCP_CHECK_CLIENTS, target),
+
+  // ── Error recovery ───────────────────────────────────────────────────────
+  showErrorLog: (logData: { message: string; stack: string; componentStack?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_APP_SHOW_ERROR_LOG, logData),
+  restartApp: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_APP_RESTART),
 })

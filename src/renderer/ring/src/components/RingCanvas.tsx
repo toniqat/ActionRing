@@ -1,8 +1,9 @@
-import { useRef, useEffect, useState } from 'react'
+import { useRef, useEffect, useState, useMemo } from 'react'
 import { RingSegment } from './RingSegment'
 import { SegmentIcon } from './SegmentIcon'
 import { getSlotButtonColors } from '@shared/colorUtils'
 import { useSegmentHitTest } from '../hooks/useSegmentHitTest'
+import { getSubSlotAngle } from '@shared/ringGeometry'
 import type { SlotConfig } from '@shared/config.types'
 
 // ─── Debug flag ───────────────────────────────────────────────────────────────
@@ -46,26 +47,6 @@ interface RingCanvasProps {
   onSegmentRelease: (slot: SlotConfig | null) => void
 }
 
-/**
- * Angles (radians) for each sub-slot using arc-length-preserving spacing.
- * The gap between sub-slots matches the pixel gap between primary ring slots,
- * so the sub-ring feels equally dense regardless of its larger radius.
- * Arc width is dynamic (no hard cap).
- */
-function getSubSlotAngle(
-  folderAngle: number,
-  subIndex: number,
-  numSubs: number,
-  numPrimarySlots: number,
-  radius: number,
-  subRadius: number
-): number {
-  if (numSubs === 1) return folderAngle
-  const arcGap = (2 * Math.PI * radius) / numPrimarySlots  // pixel gap on primary ring
-  const step = arcGap / subRadius                           // same pixel gap → smaller angle at larger radius
-  const totalArc = (numSubs - 1) * step
-  return folderAngle - totalArc / 2 + subIndex * step
-}
 
 /** x,y of a sub-slot button relative to ring center */
 function getSubSlotPos(
@@ -124,10 +105,10 @@ export function RingCanvas({
   const hitTest = useSegmentHitTest(slots.length, centerX, centerY, 30)
   const svgRef = useRef<SVGSVGElement>(null)
 
-  const subRadius = radius * folderSubRadiusMultiplier
-  const hasFolders = slots.some((s) => s.actions[0]?.type === 'folder')
-  const maxRadius = hasFolders ? subRadius : radius
-  const size = (maxRadius + 60) * 2
+  const subRadius = useMemo(() => radius * folderSubRadiusMultiplier, [radius, folderSubRadiusMultiplier])
+  const hasFolders = useMemo(() => slots.some((s) => s.actions[0]?.type === 'folder'), [slots])
+  const maxRadius = useMemo(() => hasFolders ? subRadius : radius, [hasFolders, subRadius, radius])
+  const size = useMemo(() => (maxRadius + 60) * 2, [maxRadius])
 
   useEffect(() => {
     window.ringAPI.onCursorMove(({ x, y }) => {

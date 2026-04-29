@@ -73,10 +73,10 @@ export class TrayManager {
   showNotification(title: string, body: string): void {
     if (!this.tray) return
     if (process.platform === 'win32') {
-      // Use the modern WinRT Toast API instead of the legacy balloon.
-      // Do NOT pass `icon` — on Windows that triggers the thumbnail/image layout
-      // rather than the header icon slot. The header icon is supplied automatically
-      // by Windows from the AppUserModelId → exe registration (icon.ico).
+      // On Windows the header icon comes from the Start Menu shortcut registered
+      // with the matching AppUserModelId (created in index.ts at startup).
+      // Passing `icon` here would insert a large thumbnail image in the toast body,
+      // not the small header icon — so we omit it on Windows.
       new Notification({ title, body }).show()
     } else {
       const iconPath = is.dev

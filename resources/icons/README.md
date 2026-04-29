@@ -12,4 +12,5 @@ SVG icon assets used for ring slot icons and UI elements.
 ## Notes
 
 - App logo files (`icon.ico`, `icon.svg`, `github-logo.svg`) have been moved to `resources/logo/`.
+- Action type icons are in a separate folder: `resources/action/`.
 - `iconHandlers.ts` reads this folder to list available slot icons, skipping `tray-icon.svg` and `README.md`.

@@ -2,6 +2,11 @@ export type ActionType = 'launch' | 'keyboard' | 'shell' | 'system' | 'folder' |
   | 'if-else' | 'loop' | 'sequence' | 'wait' | 'set-var' | 'list' | 'dict' | 'toast' | 'run-shortcut'
   | 'escape' | 'stop' | 'calculate' | 'comment'
   | 'mouse-move' | 'mouse-click'
+  | 'clipboard' | 'text' | 'transform'
+  | 'ask-input' | 'choose-from-list' | 'show-alert'
+  | 'http-request' | 'file'
+  | 'date-time' | 'try-catch'
+  | 'registry' | 'environment' | 'service'
 
 export type SystemActionId =
   | 'volume-up'
@@ -15,6 +20,8 @@ export type SystemActionId =
 export interface LaunchAction {
   type: 'launch'
   target: string
+  /** Variable name to store the spawned PID, enabling wait(app-exit) to reference it. */
+  pidVar?: string
 }
 
 export interface KeyboardAction {
@@ -194,6 +201,8 @@ export interface DictAction {
 
 export interface ToastAction {
   type: 'toast'
+  /** Notification title — supports $var interpolation (defaults to 'Action Ring') */
+  title?: string
   /** Notification body — supports $var interpolation */
   message: string
 }
@@ -259,10 +268,203 @@ export interface MouseClickAction {
   button: MouseButton
 }
 
+// ── Phase 1: Data processing actions ─────────────────────────────────────────
+
+export type ClipboardMode = 'get' | 'set'
+
+export interface ClipboardAction {
+  type: 'clipboard'
+  mode: ClipboardMode
+  resultVar?: string
+  value?: string
+}
+
+export type TextMode = 'replace' | 'split' | 'combine' | 'case' | 'match' | 'substring' | 'length' | 'trim' | 'pad'
+
+export type TextCaseMode = 'upper' | 'lower' | 'capitalize' | 'camel' | 'snake' | 'kebab'
+
+export interface TextAction {
+  type: 'text'
+  mode: TextMode
+  input: string
+  resultVar: string
+  // replace
+  find?: string
+  replaceWith?: string
+  useRegex?: boolean
+  // split / combine
+  separator?: string
+  listVar?: string
+  // case
+  caseMode?: TextCaseMode
+  // match
+  pattern?: string
+  matchAll?: boolean
+  // substring
+  start?: number | string
+  length?: number | string
+  // pad
+  padLength?: number | string
+  padChar?: string
+  padSide?: 'start' | 'end'
+}
+
+export type TransformMode = 'json-parse' | 'json-stringify' | 'url-encode' | 'url-decode' | 'base64-encode' | 'base64-decode' | 'hash'
+
+export type HashAlgorithm = 'md5' | 'sha1' | 'sha256' | 'sha512'
+
+export interface TransformAction {
+  type: 'transform'
+  mode: TransformMode
+  input: string
+  resultVar: string
+  algorithm?: HashAlgorithm
+}
+
+// ── Phase 2: User interaction actions ────────────────────────────────────────
+
+export type AskInputType = 'text' | 'number' | 'password'
+
+export interface AskInputAction {
+  type: 'ask-input'
+  title?: string
+  prompt?: string
+  defaultValue?: string
+  inputType?: AskInputType
+  resultVar: string
+}
+
+export interface ChooseFromListAction {
+  type: 'choose-from-list'
+  title?: string
+  items?: string[]
+  listVar?: string
+  multiple?: boolean
+  resultVar: string
+}
+
+export interface ShowAlertAction {
+  type: 'show-alert'
+  title?: string
+  message?: string
+  confirmText?: string
+  cancelText?: string
+  resultVar?: string
+}
+
+// ── Phase 3: External integration actions ───────────────────────────────────
+
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD'
+
+export interface HttpRequestAction {
+  type: 'http-request'
+  url: string
+  method: HttpMethod
+  headers?: string
+  body?: string
+  timeout?: number
+  resultVar?: string
+  statusVar?: string
+}
+
+export type FileMode = 'read' | 'write' | 'exists' | 'list' | 'pick' | 'info' | 'delete' | 'rename' | 'copy'
+
+export type FileInfoField = 'size' | 'modified' | 'created' | 'extension' | 'name' | 'directory'
+
+export interface FileAction {
+  type: 'file'
+  mode: FileMode
+  path?: string
+  resultVar?: string
+  // read
+  encoding?: string
+  // write
+  content?: string
+  writeMode?: 'overwrite' | 'append'
+  // list
+  pattern?: string
+  // pick
+  title?: string
+  filters?: string
+  pickMode?: 'file' | 'directory'
+  // rename / copy
+  destination?: string
+  // info
+  infoField?: FileInfoField
+}
+
+// ── Phase 4: Time & error handling actions ─────────────────────────────────
+
+export type DateTimeMode = 'now' | 'format' | 'math' | 'diff' | 'parse'
+
+export type DateTimeUnit = 'years' | 'months' | 'days' | 'hours' | 'minutes' | 'seconds' | 'milliseconds'
+
+export interface DateTimeAction {
+  type: 'date-time'
+  mode: DateTimeMode
+  resultVar: string
+  format?: string          // 'iso'(default) | 'locale' | 'timestamp' | custom
+  input?: string
+  amount?: number | string // math: amount to add/subtract
+  unit?: DateTimeUnit
+  date1?: string           // diff
+  date2?: string           // diff
+}
+
+export interface TryCatchAction {
+  type: 'try-catch'
+  tryActions: ActionConfig[]
+  catchActions: ActionConfig[]
+  errorVar?: string        // variable name to store error message
+}
+
+// ── Phase 5: Windows-specific actions ──────────────────────────────────────
+
+export type RegistryMode = 'read' | 'write' | 'delete' | 'exists'
+
+export type RegistryHive = 'HKLM' | 'HKCU' | 'HKCR' | 'HKU' | 'HKCC'
+
+export type RegistryDataType = 'REG_SZ' | 'REG_DWORD' | 'REG_QWORD' | 'REG_EXPAND_SZ' | 'REG_MULTI_SZ'
+
+export interface RegistryAction {
+  type: 'registry'
+  mode: RegistryMode
+  hive: RegistryHive
+  keyPath: string
+  valueName?: string
+  data?: string
+  dataType?: RegistryDataType
+  resultVar?: string
+}
+
+export type EnvironmentMode = 'get' | 'set' | 'list'
+
+export interface EnvironmentAction {
+  type: 'environment'
+  mode: EnvironmentMode
+  name?: string
+  value?: string
+  resultVar?: string
+}
+
+export type ServiceMode = 'status' | 'start' | 'stop' | 'restart'
+
+export interface ServiceAction {
+  type: 'service'
+  mode: ServiceMode
+  serviceName: string
+  resultVar?: string
+}
+
 export type ActionConfig = LaunchAction | KeyboardAction | ShellAction | SystemAction | FolderAction | LinkAction
   | IfElseAction | LoopAction | SequenceAction | WaitAction | SetVarAction | ListAction | DictAction | ToastAction | RunShortcutAction
   | EscapeAction | StopAction | CalculateAction | CommentAction
   | MouseMoveAction | MouseClickAction
+  | ClipboardAction | TextAction | TransformAction
+  | AskInputAction | ChooseFromListAction | ShowAlertAction
+  | HttpRequestAction | FileAction
+  | DateTimeAction | TryCatchAction
+  | RegistryAction | EnvironmentAction | ServiceAction
 
 /** A named group for organizing shortcuts in the library. */
 export interface ShortcutGroup {
@@ -388,6 +590,10 @@ export interface AppConfig {
   shortcutsLibrary?: ShortcutEntry[]
   /** Named groups for organizing the shortcuts library (v10+). */
   shortcutGroups?: ShortcutGroup[]
+  /** Whether the MCP API server is enabled (v13+). Defaults to true. */
+  mcpEnabled?: boolean
+  /** Cached set of MCP client IDs confirmed as installed locally. */
+  mcpInstalledClients?: string[]
 }
 
 // ── Legacy types — kept only for v6→v7 migration ─────────────────────────────

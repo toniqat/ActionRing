@@ -10,6 +10,7 @@ import {
   IPC_APPEARANCE_DATA_REFRESH,
   IPC_APPEARANCE_UPDATED,
   IPC_APPEARANCE_PANEL_SIZES,
+  IPC_APPEARANCE_CLOSE,
   IPC_WINDOW_MINIMIZE,
   IPC_WINDOW_MAXIMIZE,
   IPC_WINDOW_CLOSE,
@@ -55,7 +56,7 @@ export function registerAppearanceHandlers(windowManager: WindowManager, configS
   })
 
   // Appearance → main: close window — persist the final slot state to disk
-  ipcMain.on('appearance:close', (_event) => {
+  ipcMain.on(IPC_APPEARANCE_CLOSE, (_event) => {
     if (pendingSlotData) {
       const config = configStore.get()
       const newSlots = [...config.slots]

@@ -20,7 +20,9 @@ import { FloatingRingLayoutPanel } from './FloatingRingLayoutPanel'
 import { ShortcutSidebar, ShortcutNodeCard, entryIcon } from './ShortcutSidebar'
 import type { ShortcutEntry, SlotConfig } from '@shared/config.types'
 
-const SLOT_PANEL_WIDTH = 288
+const SLOT_PANEL_DEFAULT_WIDTH = 288
+const SLOT_PANEL_MIN_WIDTH = 220
+const SLOT_PANEL_MAX_WIDTH = 440
 const SIDEBAR_WIDTH = 228
 const SIDEBAR_MIN_WIDTH = 160
 const SIDEBAR_MAX_WIDTH = 400
@@ -54,6 +56,8 @@ export function UnifiedTab(): JSX.Element {
 
   const showPanel = selectedSlotIndex !== null || selectedSubSlotIndex !== null
 
+  const [slotPanelWidth, setSlotPanelWidth] = useState(SLOT_PANEL_DEFAULT_WIDTH)
+  const [isResizingSlotPanel, setIsResizingSlotPanel] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_WIDTH)
   const [activeEntry, setActiveEntry] = useState<ShortcutEntry | null>(null)
   const [insertionIndex, setInsertionIndex] = useState<number | null>(null)
@@ -217,7 +221,26 @@ export function UnifiedTab(): JSX.Element {
     setInsertionIndex(null)
   }, [])
 
-  const handleDividerMouseDown = useCallback((e: React.MouseEvent) => {
+  const handleLeftDividerMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startWidth = slotPanelWidth
+    setIsResizingSlotPanel(true)
+
+    const onMouseMove = (ev: MouseEvent) => {
+      const delta = ev.clientX - startX
+      setSlotPanelWidth(Math.max(SLOT_PANEL_MIN_WIDTH, Math.min(SLOT_PANEL_MAX_WIDTH, startWidth + delta)))
+    }
+    const onMouseUp = () => {
+      setIsResizingSlotPanel(false)
+      window.removeEventListener('mousemove', onMouseMove)
+      window.removeEventListener('mouseup', onMouseUp)
+    }
+    window.addEventListener('mousemove', onMouseMove)
+    window.addEventListener('mouseup', onMouseUp)
+  }, [slotPanelWidth])
+
+  const handleRightDividerMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     const startX = e.clientX
     const startWidth = sidebarWidth
@@ -248,29 +271,40 @@ export function UnifiedTab(): JSX.Element {
           {/* Slot Edit Panel — in flex flow, animates width to push preview right */}
           <AnimatePresence>
             {showPanel && (
-              <motion.div
-                key="slot-panel"
-                initial={{ width: 0 }}
-                animate={{ width: SLOT_PANEL_WIDTH }}
-                exit={{ width: 0 }}
-                transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
-                style={{
-                  flexShrink: 0,
-                  overflow: 'hidden',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  background: 'var(--c-surface)',
-                  borderRight: '1px solid var(--c-border)',
-                  boxShadow: '4px 0 20px rgba(0,0,0,0.25)',
-                  zIndex: 10,
-                }}
-              >
-                <SlotEditPanel
-                  width={SLOT_PANEL_WIDTH}
-                  insertionIndex={insertionIndex}
-                  isDraggingExternal={activeEntry !== null && insertionIndex !== null}
+              <>
+                <motion.div
+                  key="slot-panel"
+                  initial={{ width: 0 }}
+                  animate={{ width: slotPanelWidth }}
+                  exit={{ width: 0 }}
+                  transition={{ duration: isResizingSlotPanel ? 0 : 0.28, ease: [0.4, 0, 0.2, 1] }}
+                  style={{
+                    flexShrink: 0,
+                    overflow: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    background: 'var(--c-surface)',
+                    boxShadow: '4px 0 20px rgba(0,0,0,0.25)',
+                    zIndex: 10,
+                  }}
+                >
+                  <SlotEditPanel
+                    width={slotPanelWidth}
+                    insertionIndex={insertionIndex}
+                    isDraggingExternal={activeEntry !== null && insertionIndex !== null}
+                  />
+                </motion.div>
+                {/* Left panel resize handle */}
+                <motion.div
+                  key="left-divider"
+                  className="panel-resize-handle"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  onMouseDown={handleLeftDividerMouseDown}
                 />
-              </motion.div>
+              </>
             )}
           </AnimatePresence>
 
@@ -296,18 +330,10 @@ export function UnifiedTab(): JSX.Element {
             </div>
           </div>
 
-          {/* Draggable resize handle */}
+          {/* Right sidebar resize handle */}
           <div
-            onMouseDown={handleDividerMouseDown}
-            style={{
-              width: 4,
-              flexShrink: 0,
-              cursor: 'col-resize',
-              background: 'var(--c-border)',
-              transition: 'background 0.15s',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--c-accent)' }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'var(--c-border)' }}
+            className="panel-resize-handle"
+            onMouseDown={handleRightDividerMouseDown}
           />
 
           {/* Right sidebar — shortcut library */}

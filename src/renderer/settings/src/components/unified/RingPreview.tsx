@@ -6,6 +6,7 @@ import { useT } from '../../i18n/I18nContext'
 import { BUILTIN_ICONS } from '@shared/icons'
 import { SVGIcon } from '@shared/SVGIcon'
 import { getSlotButtonColors } from '@shared/colorUtils'
+import { getSubSlotAngle } from '@shared/ringGeometry'
 import type { SlotConfig } from '@shared/config.types'
 
 const VIEWBOX_HALF = 230
@@ -27,24 +28,6 @@ function generateId(): string {
   return Math.random().toString(36).slice(2, 10)
 }
 
-/**
- * Angles for sub-slots using arc-length-preserving spacing (matches primary ring density).
- * Arc width is dynamic — not capped at 180°.
- */
-function getSubSlotAngle(
-  folderAngle: number,
-  subIndex: number,
-  numSubs: number,
-  numPrimarySlots: number,
-  radius: number,
-  subRadius: number
-): number {
-  if (numSubs === 1) return folderAngle
-  const arcGap = (2 * Math.PI * radius) / numPrimarySlots
-  const step = arcGap / subRadius
-  const totalArc = (numSubs - 1) * step
-  return folderAngle - totalArc / 2 + subIndex * step
-}
 
 // ── Drop zone overlay rendered inside each slot during drag ───────────────────
 

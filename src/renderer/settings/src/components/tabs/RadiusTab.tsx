@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { AppConfig } from '@shared/config.types'
 import { BUILTIN_ICONS } from '@shared/icons'
+import { sanitizeSvg } from '@shared/svgUtils'
 
 interface Props {
   config: AppConfig
@@ -125,7 +126,7 @@ export function RadiusTab({ config, onSave }: Props): JSX.Element {
                     >
                       <div
                         // eslint-disable-next-line react/no-danger
-                        dangerouslySetInnerHTML={{ __html: iconSvg }}
+                        dangerouslySetInnerHTML={{ __html: sanitizeSvg(iconSvg) }}
                         style={{ width: 20, height: 20, transform: 'scale(0.83)', transformOrigin: 'top left', opacity: 0.7 }}
                       />
                     </foreignObject>

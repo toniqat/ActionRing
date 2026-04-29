@@ -16,6 +16,7 @@ const ITEM_GAP   = 4
 const ITEM_STEP  = ITEM_WIDTH + ITEM_GAP
 const NAV_BTN_W  = 20
 const ICON_SIZE  = 22
+const ADD_BTN_EXTRA = ITEM_GAP + ICON_SIZE   // space the "+" button occupies in the track
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -207,6 +208,7 @@ function ProfileDropdown({
   onClose,
   onChangeTarget,
   onDeleteApp,
+  predictedPos: predictedPosProp,
 }: {
   app: AppEntry
   anchorRef: React.RefObject<HTMLElement>
@@ -214,6 +216,7 @@ function ProfileDropdown({
   onClose: () => void
   onChangeTarget: () => void
   onDeleteApp: () => void
+  predictedPos?: { top: number; left: number } | null
 }): JSX.Element {
   const t = useT()
   const { setActiveEditingContext, activeEditingAppId } = useSettings()
@@ -223,19 +226,23 @@ function ProfileDropdown({
   const appMenuBtnRef = useRef<HTMLButtonElement>(null)
 
   const [showAppMenu, setShowAppMenu] = useState(false)
-  const [appMenuPos, setAppMenuPos] = useState({ top: 0, right: 0 })
+  const [appMenuPos, setAppMenuPos] = useState({ top: 0, left: 0 })
   const [contextMenuProfileId, setContextMenuProfileId] = useState<string | null>(null)
   const [contextMenuPos, setContextMenuPos] = useState({ top: 0, left: 0 })
   const [renamingProfileId, setRenamingProfileId] = useState<string | null>(null)
   const [renameValue, setRenameValue] = useState('')
 
-  // Position below anchor
+  // Position below anchor (use predicted final position if scrolling)
   const [pos, setPos] = useState({ top: 0, left: 0 })
   useLayoutEffect(() => {
+    if (predictedPosProp) {
+      setPos(predictedPosProp)
+      return
+    }
     if (!anchorRef.current) return
     const rect = anchorRef.current.getBoundingClientRect()
     setPos({ top: rect.bottom + 4, left: rect.left })
-  }, [anchorRef])
+  }, [anchorRef, predictedPosProp])
 
   // Close on outside click; clicking inside dropdown (but outside context menu) closes context menu
   useEffect(() => {
@@ -378,7 +385,11 @@ function ProfileDropdown({
               e.stopPropagation()
               if (!showAppMenu && appMenuBtnRef.current) {
                 const rect = appMenuBtnRef.current.getBoundingClientRect()
-                setAppMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
+                const menuWidth = 180
+                const left = rect.right + 4 + menuWidth > window.innerWidth
+                  ? rect.left - menuWidth - 4
+                  : rect.right + 4
+                setAppMenuPos({ top: rect.top, left })
               }
               setShowAppMenu((v) => !v)
             }}
@@ -403,7 +414,7 @@ function ProfileDropdown({
               e.currentTarget.style.color = showAppMenu ? 'var(--c-text)' : 'var(--c-text-dim)'
             }}
           >
-            ⋯
+            <UIIcon name="setting_action" size={14} />
           </button>
 
         </div>
@@ -560,7 +571,7 @@ function ProfileDropdown({
             style={{
               position: 'fixed',
               top: appMenuPos.top,
-              right: appMenuPos.right,
+              left: appMenuPos.left,
               zIndex: 10002,
               minWidth: 180,
               background: 'var(--c-elevated)',
@@ -653,6 +664,7 @@ function CarouselItem({
   onSelectProfile,
   onDeleteApp,
   onReassignTarget,
+  onScrollTo,
   forceOpen,
   onForceOpenConsumed,
 }: {
@@ -661,25 +673,56 @@ function CarouselItem({
   onSelectProfile: (profileId: string) => void
   onDeleteApp: (appId: string) => void
   onReassignTarget: (appId: string) => void
+  onScrollTo?: () => number
   forceOpen?: boolean
   onForceOpenConsumed?: () => void
 }): JSX.Element {
   const [showDropdown, setShowDropdown] = useState(false)
   const [isHovered, setIsHovered] = useState(false)
+  const [predictedPos, setPredictedPos] = useState<{ top: number; left: number } | null>(null)
   const itemRef = useRef<HTMLDivElement>(null)
+  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (forceOpen) {
+      setPredictedPos(null)
       setShowDropdown(true)
       onForceOpenConsumed?.()
     }
   }, [forceOpen]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => {
+    return () => { if (openTimerRef.current) clearTimeout(openTimerRef.current) }
+  }, [])
+
   const handleClick = () => {
-    setShowDropdown((v) => !v)
+    if (showDropdown) {
+      setShowDropdown(false)
+      setPredictedPos(null)
+      if (openTimerRef.current) { clearTimeout(openTimerRef.current); openTimerRef.current = null }
+      return
+    }
+
+    const originalRect = itemRef.current?.getBoundingClientRect()
+    const delta = onScrollTo?.() ?? 0
+
+    if (Math.abs(delta) > 2 && originalRect) {
+      // Scroll happening — delay dropdown and predict final anchor position
+      setPredictedPos({ top: originalRect.bottom + 4, left: originalRect.left + delta })
+      openTimerRef.current = setTimeout(() => {
+        setShowDropdown(true)
+        openTimerRef.current = null
+      }, 150)
+    } else {
+      setPredictedPos(null)
+      setShowDropdown(true)
+    }
   }
 
-  const closeDropdown = useCallback(() => setShowDropdown(false), [])
+  const closeDropdown = useCallback(() => {
+    setShowDropdown(false)
+    setPredictedPos(null)
+  }, [])
 
   const activeProfileName = app.profiles.find((p) => p.id === app.activeProfileId)?.name ?? ''
 
@@ -692,9 +735,10 @@ function CarouselItem({
         onClick={handleClick}
         title={`${app.displayName} — ${activeProfileName}`}
         style={{
+          position: 'relative',
           width: ITEM_WIDTH,
-          display: 'flex', flexDirection: 'column', alignItems: 'center',
-          gap: 3, padding: '4px 0',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: '7px 0',
           background: (isHovered || showDropdown) ? 'var(--c-surface)' : 'none',
           border: 'none', cursor: 'pointer',
           borderRadius: 7,
@@ -703,13 +747,14 @@ function CarouselItem({
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
-        {/* Active indicator dot */}
+        <AppIcon app={app} isActive={isActive} isHovered={isHovered || showDropdown} size={ICON_SIZE} />
+        {/* Active indicator bar */}
         <div style={{
-          height: 2, width: 14, borderRadius: 2, marginBottom: 1,
+          position: 'absolute', bottom: 2, left: '50%', transform: 'translateX(-50%)',
+          height: 2, width: 14, borderRadius: 2,
           background: isActive ? 'var(--c-accent)' : 'transparent',
           transition: 'background 0.2s',
         }} />
-        <AppIcon app={app} isActive={isActive} isHovered={isHovered || showDropdown} size={ICON_SIZE} />
       </button>
 
       {createPortal(
@@ -725,6 +770,7 @@ function CarouselItem({
               onClose={closeDropdown}
               onChangeTarget={() => { onReassignTarget(app.id); closeDropdown() }}
               onDeleteApp={() => { onDeleteApp(app.id); closeDropdown() }}
+              predictedPos={predictedPos}
             />
           )}
         </AnimatePresence>,
@@ -744,12 +790,13 @@ function AddAppButton({ onClick }: { onClick: () => void }): JSX.Element {
       title={t('carousel.addApp')}
       style={{
         flexShrink: 0,
-        width: ITEM_WIDTH,
-        height: 38,
+        width: ICON_SIZE,
+        height: ICON_SIZE,
+        alignSelf: 'center',
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         background: 'none',
         border: '1.5px dashed var(--c-border)',
-        borderRadius: 7,
+        borderRadius: 5,
         cursor: 'pointer',
         transition: 'border-color 0.15s, background 0.12s',
       }}
@@ -762,8 +809,102 @@ function AddAppButton({ onClick }: { onClick: () => void }): JSX.Element {
         e.currentTarget.style.background = 'none'
       }}
     >
-      <span style={{ fontSize: 16, lineHeight: 1, color: 'var(--c-accent)', fontWeight: 300 }}>+</span>
+      <svg width={12} height={12} viewBox="0 -960 960 960" fill="var(--c-accent)">
+        <path d="M440-440H200v-80h240v-240h80v240h240v80H520v240h-80v-240Z" />
+      </svg>
     </button>
+  )
+}
+
+// ── Carousel Context Menu ─────────────────────────────────────────────────────
+
+function CarouselContextMenu({
+  pos,
+  onScrollToStart,
+  onScrollToEnd,
+  onAddApp,
+  onClose,
+}: {
+  pos: { x: number; y: number }
+  onScrollToStart: () => void
+  onScrollToEnd: () => void
+  onAddApp: () => void
+  onClose: () => void
+}): JSX.Element {
+  const t = useT()
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  const items: Array<{ label: string; icon: React.ReactNode; action: () => void; separator?: boolean }> = [
+    { label: t('carousel.scrollToStart'), icon: <UIIcon name="first_page" size={13} />, action: () => { onScrollToStart(); onClose() } },
+    { label: t('carousel.scrollToEnd'),   icon: <UIIcon name="last_page" size={13} />,  action: () => { onScrollToEnd(); onClose() } },
+    { label: '', icon: null, action: () => {}, separator: true },
+    { label: t('carousel.addNewApp'),     icon: <UIIcon name="add" size={13} />,         action: () => { onAddApp(); onClose() } },
+  ]
+
+  // Clamp position to viewport
+  const menuWidth = 200
+  const menuHeight = items.length * 30 + 6
+  const left = Math.min(pos.x, window.innerWidth - menuWidth - 8)
+  const top = Math.min(pos.y, window.innerHeight - menuHeight - 8)
+
+  return createPortal(
+    <motion.div
+      ref={menuRef}
+      initial={{ opacity: 0, scale: 0.93 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.95 }}
+      transition={{ duration: 0.1 }}
+      style={{
+        position: 'fixed',
+        top,
+        left,
+        zIndex: 10001,
+        minWidth: menuWidth,
+        background: 'var(--c-elevated)',
+        border: '1px solid var(--c-border)',
+        borderRadius: 9,
+        boxShadow: '0 8px 28px rgba(0,0,0,0.5)',
+        overflow: 'hidden',
+        padding: '3px 0',
+      }}
+    >
+      {items.map((item, i) =>
+        item.separator ? (
+          <div key={`sep-${i}`} style={{ height: 1, background: 'var(--c-border-sub)', margin: '3px 0' }} />
+        ) : (
+          <button
+            key={item.label}
+            onClick={item.action}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 9,
+              width: '100%', padding: '6px 12px',
+              background: 'none', border: 'none',
+              cursor: 'pointer',
+              fontFamily: 'inherit', textAlign: 'left',
+              transition: 'background 0.1s',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--c-surface)' }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
+          >
+            <span style={{ width: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--c-text-dim)', flexShrink: 0 }}>
+              {item.icon}
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--c-text)' }}>
+              {item.label}
+            </span>
+          </button>
+        )
+      )}
+    </motion.div>,
+    document.body,
   )
 }
 
@@ -776,10 +917,12 @@ export function AppCarousel(): JSX.Element {
   const [overlayOpen, setOverlayOpen] = useState(false)
   const [reassignAppId, setReassignAppId] = useState<string | null>(null)
   const [openDropdownAppId, setOpenDropdownAppId] = useState<string | null>(null)
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerWidth, setContainerWidth] = useState(0)
   const [trackOffset, setTrackOffset] = useState(0)
+  const [scrollToIndex, setScrollToIndex] = useState<number | null>(null)
 
   useLayoutEffect(() => {
     if (!containerRef.current) return
@@ -790,27 +933,29 @@ export function AppCarousel(): JSX.Element {
     return () => obs.disconnect()
   }, [])
 
+  const centerOnIndex = useCallback((index: number) => {
+    if (containerWidth === 0 || index < 0) return
+    const usableWidth = containerWidth - NAV_BTN_W * 2
+    // Center the item, compensating for the add-app button on the right
+    const idealOffset = -(index * ITEM_STEP) + usableWidth / 2 - ITEM_WIDTH / 2 + ADD_BTN_EXTRA / 2
+    setTrackOffset(idealOffset)
+  }, [containerWidth])
+
   useEffect(() => {
     if (containerWidth === 0 || apps.length === 0) return
     const activeIndex = apps.findIndex((a) => a.id === activeEditingAppId)
     if (activeIndex < 0) return
+    centerOnIndex(activeIndex)
+  }, [activeEditingAppId, containerWidth, apps.length, centerOnIndex]) // eslint-disable-line react-hooks/exhaustive-deps
 
-    const usableWidth = containerWidth - NAV_BTN_W * 2
-    const totalTrackWidth = apps.length * ITEM_STEP + ITEM_WIDTH  // +ITEM_WIDTH for add button
-
-    if (totalTrackWidth <= usableWidth) {
-      // Center items when they all fit
-      setTrackOffset((usableWidth - totalTrackWidth) / 2)
-      return
+  useEffect(() => {
+    if (scrollToIndex !== null) {
+      centerOnIndex(scrollToIndex)
+      setScrollToIndex(null)
     }
+  }, [scrollToIndex, centerOnIndex])
 
-    const idealOffset = -(activeIndex * ITEM_STEP) + usableWidth / 2 - ITEM_WIDTH / 2
-    const maxScrollLeft = Math.max(0, totalTrackWidth - usableWidth)
-    const minOffset = -maxScrollLeft
-    setTrackOffset(Math.max(minOffset, Math.min(0, idealOffset)))
-  }, [activeEditingAppId, containerWidth, apps.length]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const totalTrackWidth = apps.length * ITEM_STEP + ITEM_WIDTH
+  const totalTrackWidth = apps.length * ITEM_STEP + ICON_SIZE
   const usableWidth = containerWidth - NAV_BTN_W * 2
   const canScrollLeft = trackOffset < 0
   const canScrollRight = totalTrackWidth + trackOffset > usableWidth
@@ -820,6 +965,12 @@ export function AppCarousel(): JSX.Element {
     const maxScrollLeft = Math.max(0, totalTrackWidth - usableWidth)
     setTrackOffset((prev) => Math.max(-maxScrollLeft, Math.min(0, prev + delta)))
   }
+
+  const scrollToStart = useCallback(() => setTrackOffset(0), [])
+  const scrollToEnd = useCallback(() => {
+    const maxScrollLeft = Math.max(0, totalTrackWidth - usableWidth)
+    setTrackOffset(-maxScrollLeft)
+  }, [totalTrackWidth, usableWidth])
 
   const handleSelectProfile = useCallback((app: AppEntry, profileId: string) => {
     setActiveEditingContext(app.id, profileId)
@@ -869,6 +1020,7 @@ export function AppCarousel(): JSX.Element {
 
   return (
     <div
+      onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }) }}
       style={{
         display: 'flex',
         alignItems: 'center',
@@ -907,7 +1059,7 @@ export function AppCarousel(): JSX.Element {
           transition={{ type: 'spring', stiffness: 340, damping: 30 }}
           style={{ display: 'flex', gap: ITEM_GAP }}
         >
-          {apps.map((app) => (
+          {apps.map((app, index) => (
             <CarouselItem
               key={app.id}
               app={app}
@@ -915,6 +1067,13 @@ export function AppCarousel(): JSX.Element {
               onSelectProfile={(profileId) => handleSelectProfile(app, profileId)}
               onDeleteApp={handleDeleteApp}
               onReassignTarget={handleReassignTarget}
+              onScrollTo={() => {
+                const usableW = containerWidth - NAV_BTN_W * 2
+                const idealOffset = -(index * ITEM_STEP) + usableW / 2 - ITEM_WIDTH / 2 + ADD_BTN_EXTRA / 2
+                const delta = idealOffset - trackOffset
+                setScrollToIndex(index)
+                return delta
+              }}
               forceOpen={openDropdownAppId === app.id}
               onForceOpenConsumed={() => setOpenDropdownAppId(null)}
             />
@@ -961,6 +1120,19 @@ export function AppCarousel(): JSX.Element {
             onAdd={handleReassignApp}
             onImported={() => setReassignAppId(null)}
             onClose={() => setReassignAppId(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Carousel context menu */}
+      <AnimatePresence>
+        {ctxMenu && (
+          <CarouselContextMenu
+            pos={ctxMenu}
+            onScrollToStart={scrollToStart}
+            onScrollToEnd={scrollToEnd}
+            onAddApp={() => setOverlayOpen(true)}
+            onClose={() => setCtxMenu(null)}
           />
         )}
       </AnimatePresence>

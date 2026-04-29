@@ -1,6 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState, Component } from 'react'
 import type { ReactNode, ErrorInfo } from 'react'
-import { createPortal } from 'react-dom'
 import { useDroppable } from '@dnd-kit/core'
 import {
   SortableContext,
@@ -9,11 +8,11 @@ import {
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { motion, AnimatePresence } from 'framer-motion'
-import { HexColorPicker } from 'react-colorful'
 import { useSettings } from '../../context/SettingsContext'
 import { BUILTIN_ICONS } from '@shared/icons'
 import { SVGIcon } from '@shared/SVGIcon'
 import { UIIcon } from '@shared/UIIcon'
+import { IconColorPopup } from '@shared/IconColorPopup'
 import { useT } from '../../i18n/I18nContext'
 import { ShortcutNodeCard } from './ShortcutSidebar'
 import type { SlotConfig, ShortcutEntry } from '@shared/config.types'
@@ -31,387 +30,6 @@ class PopupErrorBoundary extends Component<{ children: ReactNode; onError: () =>
     this.props.onError()
   }
   render(): ReactNode { return this.state.hasError ? null : this.props.children }
-}
-
-// ── Icon/Color picker constants (unified with EditShortcuts) ─────────────────
-const PRESET_BG_COLORS = [
-  '#ef4444', '#f97316', '#eab308', '#22c55e',
-  '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899',
-]
-const PICKER_BTN = 36
-const PICKER_GAP = 6
-const PICKER_COLS = 5
-
-// ── SlotAppearancePopup ───────────────────────────────────────────────────────
-// Context-menu-style popup for inline icon and color editing.
-// Rendered via createPortal so it escapes overflow:hidden ancestors.
-// UI unified with EditShortcuts' IconColorPopover.
-
-function SlotAppearancePopup({
-  slot,
-  onUpdate,
-  onClose,
-  anchorEl,
-}: {
-  slot: SlotConfig
-  onUpdate: (updated: SlotConfig) => void
-  onClose: () => void
-  anchorEl: HTMLElement | null
-}): JSX.Element | null {
-  const [tab, setTab] = useState<'icon' | 'color'>('icon')
-  const [search, setSearch] = useState('')
-  const [resourceIcons, setResourceIcons] = useState<ResourceIconEntry[]>([])
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
-  const popupRef = useRef<HTMLDivElement>(null)
-  const [customColorOpen, setCustomColorOpen] = useState(false)
-  const [customColor, setCustomColor] = useState(slot.bgColor ?? '#3a3f4b')
-  const [recentColors, setRecentColors] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('actionring-recent-bgcolors') ?? '[]') as string[] } catch { return [] }
-  })
-  const [recentIcons, setRecentIcons] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('actionring-recent-icons') ?? '[]') as string[] } catch { return [] }
-  })
-
-  const trackRecentColor = (color: string | undefined) => {
-    if (color) {
-      setRecentColors((prev) => {
-        const next = [color, ...prev.filter((c) => c !== color)].slice(0, 10)
-        localStorage.setItem('actionring-recent-bgcolors', JSON.stringify(next))
-        return next
-      })
-    }
-  }
-
-  const trackRecentIcon = (iconRef: string) => {
-    setRecentIcons((prev) => {
-      const next = [iconRef, ...prev.filter((r) => r !== iconRef)].slice(0, 20)
-      localStorage.setItem('actionring-recent-icons', JSON.stringify(next))
-      return next
-    })
-    window.settingsAPI?.addRecentIcon?.(iconRef)
-  }
-
-  // Position and load resource icons when anchor is provided
-  useEffect(() => {
-    if (!anchorEl) return
-    try {
-      const rect = anchorEl.getBoundingClientRect()
-      setPos({ top: rect.bottom + 4, left: rect.left })
-    } catch { /* anchorEl may have been unmounted */ }
-    window.settingsAPI?.getResourceIcons?.().then(setResourceIcons).catch(() => {})
-  }, [anchorEl])
-
-  // Clamp popup within viewport
-  useEffect(() => {
-    if (!popupRef.current || !pos) return
-    const el = popupRef.current
-    const rect = el.getBoundingClientRect()
-    let { top, left } = pos
-    if (rect.bottom > window.innerHeight) top = Math.max(4, window.innerHeight - rect.height - 4)
-    if (rect.right > window.innerWidth) left = Math.max(4, window.innerWidth - rect.width - 4)
-    if (top !== pos.top || left !== pos.left) setPos({ top, left })
-  }, [pos])
-
-  // Click-outside to close (deferred so the opening click doesn't immediately close)
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (
-        popupRef.current && !popupRef.current.contains(e.target as Node) &&
-        anchorEl && !anchorEl.contains(e.target as Node)
-      ) {
-        onClose()
-      }
-    }
-    const timer = setTimeout(() => {
-      document.addEventListener('mousedown', handler)
-    }, 0)
-    return () => {
-      clearTimeout(timer)
-      document.removeEventListener('mousedown', handler)
-    }
-  }, [onClose, anchorEl])
-
-  if (!pos) return null
-
-  const POPUP_WIDTH = 268
-  const PADDING = 12
-
-  const filteredBuiltin = search.trim()
-    ? BUILTIN_ICONS.filter((ic) => ic.label.toLowerCase().includes(search.toLowerCase()))
-    : BUILTIN_ICONS
-  const filteredResource = search.trim()
-    ? resourceIcons.filter((ic) => ic.name.toLowerCase().includes(search.toLowerCase()))
-    : resourceIcons
-
-  // Resolve recent icons to their display data
-  const recentBuiltinIcons = recentIcons
-    .map((ref) => BUILTIN_ICONS.find((ic) => ic.name === ref))
-    .filter((ic): ic is NonNullable<typeof ic> => Boolean(ic))
-  const recentResourceIcons = recentIcons
-    .map((ref) => resourceIcons.find((e) => e.absPath === ref))
-    .filter((e): e is ResourceIconEntry => Boolean(e))
-
-  return createPortal(
-    <div
-      ref={popupRef}
-      style={{
-        position: 'fixed',
-        top: pos.top,
-        left: pos.left,
-        width: POPUP_WIDTH,
-        maxHeight: '80vh',
-        background: 'var(--c-surface)',
-        border: '1px solid var(--c-border)',
-        borderRadius: 12,
-        boxShadow: '0 8px 32px rgba(0,0,0,0.45)',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-        zIndex: 9999,
-        fontFamily: 'inherit',
-        WebkitAppRegion: 'no-drag',
-        pointerEvents: 'auto',
-      } as React.CSSProperties}
-    >
-      {/* ── Tab bar: Icon | Color ── */}
-      <div style={{ display: 'flex', padding: '8px 10px 6px', flexShrink: 0, gap: 4 }}>
-        {(['icon', 'color'] as const).map((m) => (
-          <button
-            key={m}
-            onClick={() => setTab(m)}
-            style={{
-              flex: 1, padding: '5px 0', borderRadius: 6,
-              border: tab === m ? '1px solid var(--c-accent-border)' : '1px solid transparent',
-              background: tab === m ? 'var(--c-accent-bg)' : 'var(--c-elevated)',
-              color: tab === m ? 'var(--c-accent)' : 'var(--c-text-muted)',
-              fontSize: 11, fontWeight: tab === m ? 600 : 400,
-              cursor: 'pointer', fontFamily: 'inherit', transition: 'all 0.12s',
-            }}
-          >
-            {m === 'icon' ? 'Icon' : 'Color'}
-          </button>
-        ))}
-      </div>
-
-      {tab === 'color' ? (
-        /* ── Color Section ── */
-        <div style={{ padding: `4px ${PADDING}px ${PADDING}px`, display: 'flex', flexDirection: 'column', gap: 0 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${PICKER_COLS}, ${PICKER_BTN}px)`, gap: PICKER_GAP, justifyContent: 'center', marginBottom: 8 }}>
-            {/* Auto/None swatch */}
-            <button
-              onClick={() => onUpdate({ ...slot, bgColor: undefined })}
-              title="Auto (theme default)"
-              style={{
-                width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                border: `2px solid ${slot.bgColor === undefined ? 'var(--c-accent)' : 'var(--c-border)'}`,
-                background: 'var(--c-elevated)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                padding: 0, color: 'var(--c-text-dim)', fontSize: 9, fontWeight: 600,
-              }}
-            >auto</button>
-
-            {/* Preset color swatches */}
-            {PRESET_BG_COLORS.map((color) => (
-              <button
-                key={color}
-                onClick={() => { trackRecentColor(color); onUpdate({ ...slot, bgColor: color }) }}
-                title={color}
-                style={{
-                  width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                  border: '2px solid transparent',
-                  outline: slot.bgColor === color ? `2px solid ${color}` : 'none',
-                  outlineOffset: 2,
-                  background: color,
-                  padding: 0,
-                }}
-              />
-            ))}
-
-            {/* Custom color picker trigger */}
-            <button
-              onClick={() => setCustomColorOpen((v) => !v)}
-              title="Custom color…"
-              style={{
-                width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                border: `2px solid ${customColorOpen ? 'var(--c-accent)' : 'transparent'}`,
-                background: 'conic-gradient(from 0deg, #ef4444, #f97316, #eab308, #22c55e, #06b6d4, #8b5cf6, #ec4899, #ef4444)',
-                padding: 0,
-              }}
-            />
-          </div>
-
-          {/* Inline HexColorPicker */}
-          {customColorOpen && (
-            <div style={{ marginBottom: 8 }}>
-              <HexColorPicker
-                color={customColor}
-                onChange={(c) => { setCustomColor(c); trackRecentColor(c); onUpdate({ ...slot, bgColor: c }) }}
-                style={{ width: '100%', height: 150 }}
-              />
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 6 }}>
-                <input
-                  value={customColor}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    if (/^#[0-9a-fA-F]{0,6}$/.test(v)) {
-                      setCustomColor(v)
-                      if (v.length === 7) { trackRecentColor(v); onUpdate({ ...slot, bgColor: v }) }
-                    }
-                  }}
-                  style={{
-                    flex: 1, background: 'var(--c-surface)',
-                    border: '1px solid var(--c-border)', borderRadius: 5,
-                    color: 'var(--c-text)', padding: '4px 8px',
-                    fontSize: 11, fontFamily: 'monospace', outline: 'none',
-                    boxSizing: 'border-box' as const,
-                  }}
-                />
-                {slot.bgColor && (
-                  <button
-                    onClick={() => onUpdate({ ...slot, bgColor: undefined })}
-                    title="Reset to theme default"
-                    style={{
-                      background: 'none', border: 'none', cursor: 'pointer',
-                      color: 'var(--c-text-dim)', padding: 2, borderRadius: 4,
-                      display: 'flex', alignItems: 'center',
-                    }}
-                  >
-                    <UIIcon name="close" size={13} />
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Recently used colors */}
-          {recentColors.length > 0 && (
-            <div>
-              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--c-text-dim)', fontWeight: 600, marginBottom: 6 }}>
-                Recent
-              </div>
-              <div style={{ display: 'flex', gap: PICKER_GAP, flexWrap: 'wrap' }}>
-                {recentColors.slice(0, PICKER_COLS * 2).map((color) => (
-                  <button
-                    key={color}
-                    onClick={() => onUpdate({ ...slot, bgColor: color })}
-                    title={color}
-                    style={{
-                      width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                      border: '2px solid transparent',
-                      outline: slot.bgColor === color ? `2px solid ${color}` : 'none',
-                      outlineOffset: 2,
-                      background: color,
-                      padding: 0, flexShrink: 0,
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      ) : (
-        /* ── Icon Section ── */
-        <>
-          <div style={{ padding: `0 ${PADDING}px 6px`, flexShrink: 0 }}>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search icons…"
-              style={{
-                width: '100%', background: 'var(--c-surface)',
-                border: '1px solid var(--c-border)', borderRadius: 6,
-                color: 'var(--c-text)', padding: '4px 8px',
-                fontSize: 11, fontFamily: 'inherit', outline: 'none',
-                boxSizing: 'border-box' as const,
-              }}
-            />
-          </div>
-
-          {/* Recently used icons */}
-          {!search.trim() && (recentBuiltinIcons.length > 0 || recentResourceIcons.length > 0) && (
-            <div style={{ padding: `0 ${PADDING}px 8px`, flexShrink: 0 }}>
-              <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--c-text-dim)', fontWeight: 600, marginBottom: 6 }}>
-                Recent
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, ${PICKER_BTN}px)`, gap: PICKER_GAP, justifyContent: 'center' }}>
-                {recentBuiltinIcons.map((ic) => (
-                  <button
-                    key={`recent-b-${ic.name}`}
-                    onClick={() => { trackRecentIcon(ic.name); onUpdate({ ...slot, icon: ic.name, iconIsCustom: false }) }}
-                    title={ic.label}
-                    style={{
-                      width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                      border: `2px solid ${!slot.iconIsCustom && slot.icon === ic.name ? 'var(--c-accent)' : 'transparent'}`,
-                      background: !slot.iconIsCustom && slot.icon === ic.name ? 'var(--c-btn-active)' : 'var(--c-elevated)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: 'var(--c-text)', padding: 0,
-                    }}
-                  >
-                    <SVGIcon svgString={ic.svg} size={18} />
-                  </button>
-                ))}
-                {recentResourceIcons.map((entry) => (
-                  <button
-                    key={`recent-r-${entry.filename}`}
-                    onClick={() => { trackRecentIcon(entry.absPath); onUpdate({ ...slot, icon: entry.absPath, iconIsCustom: true }) }}
-                    title={entry.name}
-                    style={{
-                      width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                      border: `2px solid ${slot.iconIsCustom && slot.icon === entry.absPath ? 'var(--c-accent)' : 'transparent'}`,
-                      background: slot.iconIsCustom && slot.icon === entry.absPath ? 'var(--c-btn-active)' : 'var(--c-elevated)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      color: 'var(--c-text)', padding: 0,
-                    }}
-                  >
-                    <SVGIcon svgString={entry.svgContent} size={18} />
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Scrollable icon grid */}
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: `0 ${PADDING}px ${PADDING}px` }}>
-            <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill, ${PICKER_BTN}px)`, gap: PICKER_GAP, justifyContent: 'center' }}>
-              {filteredBuiltin.map((ic) => (
-                <button
-                  key={ic.name}
-                  onClick={() => { trackRecentIcon(ic.name); onUpdate({ ...slot, icon: ic.name, iconIsCustom: false }) }}
-                  title={ic.label}
-                  style={{
-                    width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                    border: `2px solid ${!slot.iconIsCustom && slot.icon === ic.name ? 'var(--c-accent)' : 'transparent'}`,
-                    background: !slot.iconIsCustom && slot.icon === ic.name ? 'var(--c-btn-active)' : 'var(--c-elevated)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: 'var(--c-text)', padding: 0,
-                  }}
-                >
-                  <SVGIcon svgString={ic.svg} size={18} />
-                </button>
-              ))}
-              {filteredResource.map((entry) => (
-                <button
-                  key={entry.filename}
-                  onClick={() => { trackRecentIcon(entry.absPath); onUpdate({ ...slot, icon: entry.absPath, iconIsCustom: true }) }}
-                  title={entry.name}
-                  style={{
-                    width: PICKER_BTN, height: PICKER_BTN, borderRadius: 8, cursor: 'pointer',
-                    border: `2px solid ${slot.iconIsCustom && slot.icon === entry.absPath ? 'var(--c-accent)' : 'transparent'}`,
-                    background: slot.iconIsCustom && slot.icon === entry.absPath ? 'var(--c-btn-active)' : 'var(--c-elevated)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: 'var(--c-text)', padding: 0,
-                  }}
-                >
-                  <SVGIcon svgString={entry.svgContent} size={18} />
-                </button>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-    </div>,
-    document.body
-  )
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -533,6 +151,12 @@ export function SlotEditPanel({
   // Appearance popup state
   const [popupOpen, setPopupOpen] = useState(false)
   const iconBtnRef = useRef<HTMLButtonElement>(null)
+  const [resourceIcons2, setResourceIcons2] = useState<ResourceIconEntry[]>([])
+
+  // Load resource icons when popup opens
+  useEffect(() => {
+    if (popupOpen) window.settingsAPI?.getResourceIcons?.().then(setResourceIcons2).catch(() => {})
+  }, [popupOpen])
 
   // Close popup when selected slot changes
   useEffect(() => { setPopupOpen(false) }, [selectedSlotIndex, selectedSubSlotIndex])
@@ -924,13 +548,17 @@ export function SlotEditPanel({
       </div>
 
       {/* Appearance popup — rendered via portal outside overflow containers */}
-      {popupOpen && slot && (
+      {popupOpen && slot && iconBtnRef.current && (
         <PopupErrorBoundary onError={() => setPopupOpen(false)}>
-          <SlotAppearancePopup
-            slot={slot}
-            onUpdate={updateSlot}
+          <IconColorPopup
+            icon={slot.icon}
+            iconIsCustom={slot.iconIsCustom}
+            bgColor={slot.bgColor}
+            anchor={iconBtnRef.current}
+            resourceIcons={resourceIcons2}
+            onSelectIcon={(ic, isCustom) => updateSlot({ ...slot, icon: ic, iconIsCustom: isCustom })}
+            onSelectBgColor={(color) => updateSlot({ ...slot, bgColor: color })}
             onClose={() => setPopupOpen(false)}
-            anchorEl={iconBtnRef.current}
           />
         </PopupErrorBoundary>
       )}

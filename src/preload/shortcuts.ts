@@ -16,6 +16,8 @@ import {
   IPC_ICONS_GET_RESOURCE,
   IPC_ICONS_ADD_RECENT,
   IPC_POPUP_MENU_SHOW,
+  IPC_APP_SHOW_ERROR_LOG,
+  IPC_APP_RESTART,
 } from '@shared/ipc.types'
 
 contextBridge.exposeInMainWorld('shortcutsAPI', {
@@ -47,6 +49,7 @@ contextBridge.exposeInMainWorld('shortcutsAPI', {
     ipcRenderer.invoke(IPC_PRESET_IMPORT),
 
   onDataRefresh: (callback: (data: ShortcutsSlotData) => void): void => {
+    ipcRenderer.removeAllListeners(IPC_SHORTCUTS_DATA_REFRESH)
     ipcRenderer.on(IPC_SHORTCUTS_DATA_REFRESH, (_event, data) => callback(data))
   },
 
@@ -61,6 +64,13 @@ contextBridge.exposeInMainWorld('shortcutsAPI', {
     ipcRenderer.invoke(IPC_POPUP_MENU_SHOW, request),
 
   onThemeChanged: (callback: (theme: 'light' | 'dark') => void): void => {
+    ipcRenderer.removeAllListeners(IPC_SHORTCUTS_THEME_UPDATE)
     ipcRenderer.on(IPC_SHORTCUTS_THEME_UPDATE, (_event, theme) => callback(theme))
   },
+
+  // ── Error recovery ───────────────────────────────────────────────────────
+  showErrorLog: (logData: { message: string; stack: string; componentStack?: string }): Promise<void> =>
+    ipcRenderer.invoke(IPC_APP_SHOW_ERROR_LOG, logData),
+  restartApp: (): Promise<void> =>
+    ipcRenderer.invoke(IPC_APP_RESTART),
 })

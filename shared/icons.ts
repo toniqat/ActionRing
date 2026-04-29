@@ -114,3 +114,126 @@ export const BUILTIN_ICONS: BuiltinIcon[] = [
 export const BUILTIN_ICON_MAP: Record<string, BuiltinIcon> = Object.fromEntries(
   BUILTIN_ICONS.map((icon) => [icon.name, icon])
 )
+
+// ── Icon group definitions ──────────────────────────────────────────────────
+// Each group maps to icon names (builtin) or filenames (resource, without .svg).
+// Icons not listed in any group fall into "Misc".
+
+export interface IconGroup {
+  id: string
+  label: string
+  /** Icon names (builtin) or filenames without extension (resource) */
+  members: string[]
+}
+
+export const ICON_GROUPS: IconGroup[] = [
+  {
+    id: 'media',
+    label: 'Media',
+    members: [
+      'play', 'play_arrow', 'pause', 'resume', 'volume-up', 'volume-down', 'mute',
+      'volume_up', 'volume_off', 'music', 'skip-forward', 'skip-back',
+      'animation', 'web_stories',
+    ],
+  },
+  {
+    id: 'navigation',
+    label: 'Navigation',
+    members: [
+      'browser', 'home', 'home_app_logo', 'back', 'forward', 'search',
+      'login', 'logout', 'menu', 'apps', 'map', 'location_on', 'globe', 'web',
+    ],
+  },
+  {
+    id: 'files',
+    label: 'Files & Folders',
+    members: [
+      'folder', 'folder_copy', 'folder_open', 'download', 'upload', 'publish',
+      'storage', 'package_2', 'draft', 'content_copy', 'clipboard',
+      'imagesmode', 'photo_camera', 'photo_size_select_small', 'camera',
+    ],
+  },
+  {
+    id: 'edit',
+    label: 'Edit & Tools',
+    members: [
+      'edit', 'crop', 'crop_free', 'undo', 'redo', 'add', 'add_circle',
+      'build_circle', 'manufacturing', 'wand_stars', 'compare', 'merge',
+      'fork_left', 'call_merge', 'swap_calls', 'filter', 'sliders', 'tune',
+    ],
+  },
+  {
+    id: 'status',
+    label: 'Status & Indicators',
+    members: [
+      'check_box', 'check_circle', 'checklist', 'task_alt', 'cancel', 'close',
+      'info', 'help', 'priority', 'approval', 'rule', 'domain_verification',
+      'feedback', 'flash_on', 'radio_button_checked',
+      'notifications', 'notifications_unread', 'notification_settings',
+    ],
+  },
+  {
+    id: 'bookmarks',
+    label: 'Bookmarks & Favorites',
+    members: [
+      'star', 'favorite', 'bookmark', 'bookmark_manager', 'bookmarks',
+      'keep', 'label_important', 'lists', 'format_list_numbered',
+    ],
+  },
+  {
+    id: 'time',
+    label: 'Time & Calendar',
+    members: [
+      'alarm', 'alarm_on', 'calendar_today', 'date_range', 'event',
+      'event_available', 'event_busy', 'schedule', 'timer_pause', 'history',
+    ],
+  },
+  {
+    id: 'visual',
+    label: 'Visual & Design',
+    members: [
+      'palette', 'opacity', 'invert_colors', 'dark_mode', 'light_mode',
+      'brightness_6', 'wb_sunny', 'tonality', 'blur_on', 'texture',
+      'screenshot', 'preview', 'visibility', 'visibility_off', 'crop_free',
+      'dew_point', 'incomplete_circle', 'view_week',
+    ],
+  },
+  {
+    id: 'data',
+    label: 'Data & Charts',
+    members: [
+      'data_table', 'data_usage', 'graph_5', 'graph_8', 'numbers', 'percent',
+      'functions', 'function', 'table', 'calculator',
+    ],
+  },
+  {
+    id: 'dev',
+    label: 'Developer',
+    members: [
+      'code', 'terminal', 'database', 'deployed_code', 'schema', 'hub',
+      'stack', 'stack_group', 'workspaces', 'nat', 'extension',
+      'keyboard_command_key', 'wysiwyg',
+    ],
+  },
+  {
+    id: 'system',
+    label: 'System & Security',
+    members: [
+      'settings', 'setting_action', 'settings_power', 'power_settings_new',
+      'lock', 'lock_open', 'escape', 'mail', 'cloud',
+      'link', 'link_2', 'sync', 'refresh', 'update',
+    ],
+  },
+  {
+    id: 'shapes',
+    label: 'Shapes & Symbols',
+    members: [
+      'asterisk', 'anchor', 'category', 'circles_ext', 'crossword',
+      'gesture', 'hov', 'line_end_diamond', 'more_vert',
+      'unfold_more', 'conversion_path', 'call_missed', 'call_missed_outgoing',
+    ],
+  },
+]
+
+/** Set of all icon identifiers that belong to a named group */
+export const GROUPED_ICON_IDS = new Set(ICON_GROUPS.flatMap((g) => g.members))

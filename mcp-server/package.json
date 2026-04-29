@@ -1,0 +1,21 @@
+{
+  "name": "actionring-mcp",
+  "version": "1.0.0",
+  "description": "MCP Server for ActionRing — allows AI assistants to control ActionRing",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "actionring-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

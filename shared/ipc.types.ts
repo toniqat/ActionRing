@@ -38,6 +38,7 @@ export const IPC_WINDOW_CLOSE = 'window:close'
 
 // Appearance editor panel sizes
 export const IPC_APPEARANCE_PANEL_SIZES = 'appearance:panel-sizes'
+export const IPC_APPEARANCE_CLOSE = 'appearance:close'
 
 // Shortcuts editor window
 export const IPC_SHORTCUTS_OPEN         = 'shortcuts:open'
@@ -207,6 +208,56 @@ export interface RunningProcess {
   exePath: string | null
   iconDataUrl?: string
 }
+
+// ── Action dialog windows (Phase 2) ─────────────────────────────────────────
+export const IPC_DIALOG_ASK_INPUT       = 'dialog:ask-input'
+export const IPC_DIALOG_CHOOSE_FROM_LIST = 'dialog:choose-from-list'
+export const IPC_DIALOG_SUBMIT          = 'dialog:submit'
+
+export interface DialogAskInputPayload {
+  title: string
+  prompt: string
+  defaultValue: string
+  inputType: 'text' | 'number' | 'password'
+}
+
+export interface DialogChooseFromListPayload {
+  title: string
+  items: string[]
+  multiple: boolean
+}
+
+// ── MCP server status ────────────────────────────────────────────────────────
+export const IPC_MCP_GET_STATUS = 'mcp:get-status'
+export const IPC_MCP_SETUP = 'mcp:setup'
+export const IPC_MCP_TOGGLE = 'mcp:toggle'
+export const IPC_MCP_GET_ENTRY_PATH = 'mcp:get-entry-path'
+export const IPC_MCP_CHECK_CLIENTS = 'mcp:check-clients'
+
+export type McpSetupTarget = 'claude-code' | 'claude-desktop' | 'codex' | 'gemini'
+
+/** Per-client install & registration check result */
+export interface McpClientStatus {
+  installed: boolean
+  registered: boolean
+}
+
+export interface McpServerStatus {
+  running: boolean
+  port: number | null
+  requestCount: number
+  lastRequestAt: number | null
+  lastHeartbeat: number | null
+  tools: string[]
+}
+
+export type McpSetupResult =
+  | { ok: true; target: McpSetupTarget; detail?: string }
+  | { ok: false; error: string; command?: string }
+
+// ── Error recovery ───────────────────────────────────────────────────────────
+export const IPC_APP_SHOW_ERROR_LOG  = 'app:show-error-log'
+export const IPC_APP_RESTART         = 'app:restart'
 
 // ── Update check ─────────────────────────────────────────────────────────────
 export const IPC_APP_GET_VERSION     = 'app:get-version'
